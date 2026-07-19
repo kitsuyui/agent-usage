@@ -1,0 +1,65 @@
+// Storage for time-series rate-limit / usage observations of AI coding agent CLIs.
+//
+// A "Sample" is one observation of a provider at a point in time (one capture +
+// parse cycle). A sample fans out into zero or more "Window" rows, one per
+// rate-limit window the provider reported (e.g. "5h", "weekly"). Splitting the
+// two lets a provider report partial data (e.g. `ok: false`) without losing the
+// attempt itself, and keeps window shape (labels, durations) free to vary
+// per-provider without schema changes.
+
+datasource db {
+  provider = "sqlite"
+  // A relative sqlite path here resolves relative to this schema file
+  // (prisma/), not the project root — hence "../data/..." in .env.example.
+  url = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Sample {
+  id         String   @id @default(cuid())
+  provider   String
+  observedAt DateTime
+  ok         Boolean
+  error      String?
+  // Reset "tickets"/credits some providers report (e.g. Codex's manual
+  // usage-limit resets). Provider-specific; nullable everywhere else.
+  resetCredits Int?
+
+  windows Window[]
+
+  createdAt DateTime @default(now())
+
+  @@index([provider, observedAt])
+}
+
+model Window {
+  id       String @id @default(cuid())
+  sampleId String
+  sample   Sample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  // Provider-reported sub-scope, e.g. Claude's "Sonnet 5" vs "Opus 4.8", or
+  // Codex's "gpt-5.1-codex-max". Null when the provider doesn't sub-scope.
+  scope String?
+  // Provider's own label for the window, e.g. "5h", "Weekly", "session".
+  // Kept as free text (not an enum) so a new provider or a new window shape
+  // never requires a migration; src/domain/window-kinds.ts normalizes it.
+  window        String
+  windowSeconds Int?
+
+  remainingPercent Float?
+  usedPercent      Float?
+
+  // Raw provider text for the reset time (e.g. "4h 32m", "Resets 9pm"),
+  // kept for debugging/audit alongside the parsed absolute timestamp.
+  resetsRaw String?
+  resetsAt  DateTime?
+
+  provider   String
+  observedAt DateTime
+
+  @@index([provider, window, observedAt])
+  @@index([sampleId])
+}
