@@ -55,10 +55,28 @@ describe("parseCodexUsage", () => {
     expect(snapshot.windows[0]).toMatchObject({ scope: "default", window: "5h", remainingPercent: 90 });
   });
 
-  test("records reset-credit tickets when reported", () => {
-    const raw = "You have 2 usage limit resets available";
+  test("extracts inline scopes from the current status layout", () => {
+    const raw = [
+      "│  Weekly limit:                       [████████████████░░░░] 79% left (resets 02:48 on 29 Jul)  │",
+      "│  GPT-5.3-Codex-Spark Weekly limit:   [██████████████████░░] 88% left (resets 04:58 on 29 Jul)  │",
+    ].join("\n");
     const snapshot = parseCodexUsage(raw, OBSERVED);
-    expect(snapshot.resetCredits).toBe(2);
+    expect(snapshot.windows).toHaveLength(2);
+    expect(snapshot.windows[0]).toMatchObject({
+      scope: "default",
+      window: "Weekly",
+      remainingPercent: 79,
+    });
+    expect(snapshot.windows[1]).toMatchObject({
+      scope: "GPT-5.3-Codex-Spark",
+      window: "Weekly",
+      remainingPercent: 88,
+    });
+  });
+
+  test("records reset-credit tickets when reported", () => {
+    expect(parseCodexUsage("You have 1 usage limit reset available", OBSERVED).resetCredits).toBe(1);
+    expect(parseCodexUsage("You have 2 usage limit resets available", OBSERVED).resetCredits).toBe(2);
   });
 });
 
