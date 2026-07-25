@@ -52,6 +52,19 @@ model Window {
   remainingPercent Float?
   usedPercent      Float?
 
+  // Generic measurements keep storage stable when a provider switches from
+  // percentages to request/token/credit/spend quotas.
+  metric         String @default("quota")
+  unit           String?
+  value          Float?
+  limitValue     Float?
+  remainingValue Float?
+  usedValue      Float?
+
+  // Open-ended provider dimensions (plan, tier, model family, region, ...)
+  // encoded as canonical JSON. New dimensions do not require migrations.
+  attributesJson String?
+
   // Raw provider text for the reset time (e.g. "4h 32m", "Resets 9pm"),
   // kept for debugging/audit alongside the parsed absolute timestamp.
   resetsRaw String?
@@ -60,6 +73,7 @@ model Window {
   provider   String
   observedAt DateTime
 
-  @@index([provider, window, observedAt])
+  @@index([provider, metric, window, observedAt])
+  @@index([provider, observedAt])
   @@index([sampleId])
 }

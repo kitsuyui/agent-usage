@@ -94,9 +94,35 @@ with no windows) without losing the attempt, and keeps window shape
 provider-defined — adding a provider with a different window shape never
 requires a schema migration. See `prisma/schema.prisma`.
 
+Each `Window` is also a provider-neutral measurement:
+
+- `metric` and `unit` are free text rather than enums;
+- percent quotas retain their compatibility fields;
+- `value` stores a neutral point measurement, while
+  `limitValue`/`remainingValue`/`usedValue` describe quota-like measurements;
+- canonical JSON `attributes` carry open-ended dimensions such as model,
+  billing category, plan, tier, or region.
+
+This shape deliberately treats a price as time-series data rather than a
+mutable model catalog. For example, an input price can be recorded as
+`metric=price`, `unit=USD/million_tokens`, `value=1.25`, and attributes
+`model=...`, `category=input`. A later price change creates a new observation;
+it does not reinterpret historical usage with today's price. New models,
+billing categories, currencies, and provider tiers therefore do not require
+schema migrations.
+
+Logical series identity includes provider, scope, window, metric, unit, and
+sorted attributes. API consumers receive this stable `seriesId` instead of
+having to concatenate labels. History queries select the newest bounded
+slice and may downsample each series independently, retaining endpoints and
+local extrema, so growing retention does not make dashboard payloads grow
+without bound.
+
 ## Extensibility points
 
 - **New provider**: see [`providers.md`](providers.md).
 - **New window label** (e.g. a "monthly" window some future provider
   reports): register its duration in `src/domain/window-kinds.ts` — no
   schema or API changes needed, since `window` is stored as free text.
+- **New measurement or pricing dimension**: use free-text `metric`/`unit`
+  and `attributes`; use `measuredWindow` for non-percent observations.

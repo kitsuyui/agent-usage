@@ -4,6 +4,7 @@ import { toUsageSnapshot, usageSnapshotSchema } from "../domain/snapshot-schema.
 import { listProviders } from "../providers/index.ts";
 import {
   distinctProviders,
+  downsampleHistory,
   type HistoryQuery,
   latestSnapshot,
   latestSnapshots,
@@ -39,7 +40,9 @@ export function createHttpServer(options: HttpServerOptions) {
           return json(await latestPayload(db, url.searchParams.get("provider")));
         }
         if (url.pathname === "/api/usage/history") {
-          return json(await queryHistory(db, parseHistoryQuery(url.searchParams)));
+          const parsed = parseHistoryQuery(url.searchParams);
+          const points = await queryHistory(db, parsed.query);
+          return json(parsed.maxPoints ? downsampleHistory(points, parsed.maxPoints) : points);
         }
         if (url.pathname === "/api/usage/next-resets") return json(await nextResets(db));
         if (url.pathname === "/api/usage/samples" && request.method === "POST") {
@@ -48,6 +51,7 @@ export function createHttpServer(options: HttpServerOptions) {
         if (url.pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
         return await serveStatic(url.pathname);
       } catch (error) {
+        if (error instanceof BadRequestError) return json({ error: error.message }, 400);
         return json({ error: error instanceof Error ? error.message : String(error) }, 500);
       }
     },
@@ -84,20 +88,76 @@ async function latestPayload(db: PrismaClient, provider: string | null) {
   return latestSnapshots(db);
 }
 
-function parseHistoryQuery(params: URLSearchParams): HistoryQuery {
+interface ParsedHistoryQuery {
+  query: HistoryQuery;
+  maxPoints?: number;
+}
+
+const RANGE_PATTERN = /^(\d+)(m|h|d|w)$/;
+const RANGE_UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 } as const;
+
+function parseHistoryQuery(params: URLSearchParams): ParsedHistoryQuery {
   const provider = params.get("provider");
+  const scope = params.get("scope");
   const windowLabel = params.get("window");
+  const metric = params.get("metric");
+  const unit = params.get("unit");
   const since = params.get("since");
   const until = params.get("until");
-  const limit = Number(params.get("limit"));
+  const range = params.get("range");
+  if (since && range) throw new BadRequestError("since and range cannot be combined");
+  const parsedUntil = until ? parseTimestamp(until, "until") : undefined;
+  const parsedSince = since
+    ? parseTimestamp(since, "since").toISOString()
+    : range
+      ? new Date((parsedUntil?.getTime() ?? Date.now()) - parseRangeMs(range)).toISOString()
+      : undefined;
+  const limit = parseInteger(params.get("limit"), "limit", 1, 100_000);
+  const maxPoints = parseInteger(params.get("maxPoints"), "maxPoints", 3, 2_000);
   return {
-    ...(provider ? { provider } : {}),
-    ...(windowLabel ? { window: windowLabel } : {}),
-    ...(since ? { since } : {}),
-    ...(until ? { until } : {}),
-    ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
+    query: {
+      ...(provider ? { provider } : {}),
+      ...(scope ? { scope } : {}),
+      ...(windowLabel ? { window: windowLabel } : {}),
+      ...(metric ? { metric } : {}),
+      ...(unit ? { unit } : {}),
+      ...(parsedSince ? { since: parsedSince } : {}),
+      ...(parsedUntil ? { until: parsedUntil.toISOString() } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    },
+    ...(maxPoints !== undefined ? { maxPoints } : {}),
   };
 }
+
+function parseRangeMs(value: string): number {
+  const match = RANGE_PATTERN.exec(value.trim().toLowerCase());
+  if (!match) throw new BadRequestError("range must use a positive duration such as 10h, 14d, or 4w");
+  const amount = Number(match[1]);
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw new BadRequestError("range must be positive");
+  return amount * RANGE_UNIT_MS[match[2] as keyof typeof RANGE_UNIT_MS];
+}
+
+function parseTimestamp(value: string, name: string): Date {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new BadRequestError(`${name} must be an ISO-8601 timestamp`);
+  return parsed;
+}
+
+function parseInteger(
+  value: string | null,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new BadRequestError(`${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return parsed;
+}
+
+class BadRequestError extends Error {}
 
 async function serveStatic(pathname: string): Promise<Response> {
   const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");

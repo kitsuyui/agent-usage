@@ -15,6 +15,22 @@ export interface UsageWindow {
   resetsAt?: string;
   /** Window duration in seconds, when known (see window-kinds.ts). */
   windowSeconds?: number;
+  /** Provider-neutral measurement name, e.g. "quota", "requests", "tokens",
+   * "credits", or "spend". Free text so new pricing models do not require a
+   * schema release. */
+  metric?: string;
+  /** Unit for the absolute measurement values, e.g. "requests", "tokens",
+   * "credits", or "usd". */
+  unit?: string;
+  /** A neutral point measurement, such as a provider-reported unit price.
+   * Quotas can instead use the limit/remaining/used fields below. */
+  value?: number;
+  limitValue?: number;
+  remainingValue?: number;
+  usedValue?: number;
+  /** Extra provider dimensions such as plan, tier, region, or model family.
+   * Keys and values are intentionally open-ended. */
+  attributes?: Record<string, string>;
 }
 
 /** One observation of a provider's available capacity at a point in time. */

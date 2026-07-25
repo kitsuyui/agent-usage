@@ -4,7 +4,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { listProviders } from "../providers/index.ts";
-import { distinctProviders, latestSnapshot, latestSnapshots, nextResets, queryHistory } from "../storage/repository.ts";
+import {
+  distinctProviders,
+  downsampleHistory,
+  latestSnapshot,
+  latestSnapshots,
+  nextResets,
+  queryHistory,
+} from "../storage/repository.ts";
 
 /** Builds the MCP server exposing recorded usage data as read-only tools. */
 export function createMcpServer(db: PrismaClient): McpServer {
@@ -56,24 +63,37 @@ export function createMcpServer(db: PrismaClient): McpServer {
     {
       title: "Get usage history",
       description:
-        "Returns a time series of rate-limit/usage observations, optionally filtered by provider, window label, and time range.",
+        "Returns a time series of rate-limit/usage observations, optionally filtered and downsampled per logical series.",
       inputSchema: {
         provider: z.string().optional(),
+        scope: z.string().optional().describe("Provider-specific account, plan, model, or quota scope."),
         window: z.string().optional().describe('Provider-specific window label, e.g. "5h", "Weekly", "session".'),
+        metric: z.string().optional().describe('Measurement kind, e.g. "quota", "tokens", "requests", or "spend".'),
+        unit: z.string().optional().describe('Measurement unit, e.g. "percent", "token", "request", or "USD".'),
         since: z.string().optional().describe("ISO-8601 timestamp; only observations at or after this time."),
         until: z.string().optional().describe("ISO-8601 timestamp; only observations at or before this time."),
-        limit: z.number().int().positive().optional(),
+        limit: z.number().int().min(1).max(100_000).optional(),
+        maxPoints: z
+          .number()
+          .int()
+          .min(3)
+          .max(2_000)
+          .optional()
+          .describe("Maximum observations returned per logical series after endpoint/extrema-preserving downsampling."),
       },
     },
-    async ({ provider, window, since, until, limit }) => {
+    async ({ provider, scope, window, metric, unit, since, until, limit, maxPoints }) => {
       const points = await queryHistory(db, {
         ...(provider ? { provider } : {}),
+        ...(scope ? { scope } : {}),
         ...(window ? { window } : {}),
+        ...(metric ? { metric } : {}),
+        ...(unit ? { unit } : {}),
         ...(since ? { since } : {}),
         ...(until ? { until } : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
-      return textResult(points);
+      return textResult(maxPoints === undefined ? points : downsampleHistory(points, maxPoints));
     },
   );
 

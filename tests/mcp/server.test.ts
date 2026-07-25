@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PrismaClient } from "@prisma/client";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createMcpServer } from "../../src/mcp/server.ts";
 import { snapshotFromWindows } from "../../src/domain/types.ts";
 import { remainingWindow } from "../../src/domain/window-builder.ts";
@@ -20,6 +20,7 @@ beforeAll(async () => {
   registerBuiltinProviders();
   mkdirSync(`${ROOT}/data`, { recursive: true });
   if (existsSync(DB_PATH)) rmSync(DB_PATH);
+  closeSync(openSync(DB_PATH, "w"));
   const push = Bun.spawnSync(["bunx", "prisma", "db", "push", "--skip-generate", "--accept-data-loss"], {
     cwd: ROOT,
     env: { ...process.env, DATABASE_URL },
