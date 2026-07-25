@@ -5,6 +5,7 @@ import { parseCodexUsage } from "./parse.ts";
 export const codexProvider: UsageProvider = {
   id: "codex",
   displayName: "Codex CLI",
+  versionCommand: ["codex", "--version"],
   tui: {
     command: "codex",
     readyPattern: /›\s/,

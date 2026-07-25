@@ -25,6 +25,8 @@ export const usageSnapshotSchema = z.object({
   provider: z.string().min(1),
   ok: z.boolean(),
   windows: z.array(usageWindowSchema),
+  cliVersion: z.string().optional(),
+  errorCode: z.string().optional(),
   resetCredits: z.number().optional(),
   error: z.string().optional(),
 });
@@ -44,6 +46,8 @@ export function toUsageSnapshot(parsed: ParsedSnapshot): UsageSnapshot {
     provider: parsed.provider,
     ok: parsed.ok,
     windows: parsed.windows.map(toUsageWindow),
+    ...(parsed.cliVersion !== undefined ? { cliVersion: parsed.cliVersion } : {}),
+    ...(parsed.errorCode !== undefined ? { errorCode: parsed.errorCode } : {}),
     ...(parsed.resetCredits !== undefined ? { resetCredits: parsed.resetCredits } : {}),
     ...(parsed.error !== undefined ? { error: parsed.error } : {}),
   };

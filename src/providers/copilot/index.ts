@@ -5,6 +5,7 @@ import { parseCopilotUsage } from "./parse.ts";
 export const copilotProvider: UsageProvider = {
   id: "copilot",
   displayName: "GitHub Copilot CLI",
+  versionCommand: ["copilot", "--version"],
   tui: {
     command: "copilot",
     readyPattern: /\/ commands · \? help/,

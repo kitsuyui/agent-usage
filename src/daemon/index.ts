@@ -26,7 +26,7 @@ export interface DaemonOptions {
    * it only captures and pushes to `sink`, with no local database or HTTP
    * server.
    */
-  http?: { db: PrismaClient; port: number; ingestToken?: string };
+  http?: { db: PrismaClient; port: number; ingestToken?: string; staleAfterSeconds?: number };
 }
 
 /**
@@ -52,6 +52,7 @@ export async function runDaemon(options: DaemonOptions): Promise<void> {
         db: options.http.db,
         port: options.http.port,
         ...(options.http.ingestToken ? { ingestToken: options.http.ingestToken } : {}),
+        staleAfterSeconds: options.http.staleAfterSeconds ?? intervalSeconds * 2 + 60,
       })
     : undefined;
   if (server) console.log(`http api listening on http://localhost:${server.port}`);

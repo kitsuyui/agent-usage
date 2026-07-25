@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createMcpServer } from "../../src/mcp/server.ts";
-import { snapshotFromWindows } from "../../src/domain/types.ts";
+import { emptySnapshot, snapshotFromWindows } from "../../src/domain/types.ts";
 import { remainingWindow } from "../../src/domain/window-builder.ts";
 import { recordSnapshot } from "../../src/storage/repository.ts";
 import { registerBuiltinProviders } from "../../src/providers/index.ts";
@@ -35,6 +35,15 @@ beforeAll(async () => {
       remainingWindow({ window: "5h", remainingPercent: 70, resetsRaw: "2h 0m", observedAt }),
     ]),
   );
+  await recordSnapshot(db, {
+    ...emptySnapshot(
+      "antigravity",
+      "2026-07-18T09:05:00Z",
+      "provider authentication is required",
+      "authentication_required",
+    ),
+    cliVersion: "1.1.7",
+  });
 
   const server = createMcpServer(db);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -63,9 +72,20 @@ describe("MCP server", () => {
 
   test("list_providers reports built-in providers with hasData", async () => {
     const result = await client.callTool({ name: "list_providers" });
-    const payload = firstTextPayload(result as never) as { id: string; hasData: boolean }[];
+    const payload = firstTextPayload(result as never) as {
+      id: string;
+      hasData: boolean;
+      status: string;
+      errorCode: string | null;
+      cliVersion: string | null;
+    }[];
     expect(payload.find((entry) => entry.id === "codex")?.hasData).toBe(true);
     expect(payload.find((entry) => entry.id === "claude")?.hasData).toBe(false);
+    expect(payload.find((entry) => entry.id === "antigravity")).toMatchObject({
+      status: "failing",
+      errorCode: "authentication_required",
+      cliVersion: "1.1.7",
+    });
   });
 
   test("get_latest_usage returns the recorded snapshot for a provider", async () => {

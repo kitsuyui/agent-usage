@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PrismaClient } from "@prisma/client";
 import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createHttpServer } from "../../src/server/http.ts";
-import { snapshotFromWindows } from "../../src/domain/types.ts";
+import { emptySnapshot, snapshotFromWindows } from "../../src/domain/types.ts";
 import { usedWindow } from "../../src/domain/window-builder.ts";
 import { recordSnapshot } from "../../src/storage/repository.ts";
 import { registerBuiltinProviders } from "../../src/providers/index.ts";
@@ -30,10 +30,24 @@ beforeAll(async () => {
   const observedAt = "2026-07-18T09:00:00Z";
   await recordSnapshot(
     db,
-    snapshotFromWindows("claude", observedAt, [usedWindow({ window: "session", usedPercent: 20, observedAt })]),
+    {
+      ...snapshotFromWindows("claude", observedAt, [
+        usedWindow({ window: "session", usedPercent: 20, observedAt }),
+      ]),
+      cliVersion: "claude 2.1.212",
+    },
   );
+  await recordSnapshot(db, {
+    ...emptySnapshot(
+      "antigravity",
+      "2026-07-18T09:05:00Z",
+      "provider authentication is required",
+      "authentication_required",
+    ),
+    cliVersion: "1.1.7",
+  });
 
-  server = createHttpServer({ db, port: 0 });
+  server = createHttpServer({ db, port: 0, staleAfterSeconds: 60 * 60 * 24 * 365 * 10 });
   baseUrl = `http://localhost:${server.port}`;
 }, 30_000);
 
@@ -52,12 +66,27 @@ describe("HTTP API", () => {
 
   test("GET /api/providers lists the registry with hasData flags", async () => {
     const response = await fetch(`${baseUrl}/api/providers`);
-    const body = (await response.json()) as { id: string; hasData: boolean }[];
+    const body = (await response.json()) as {
+      id: string;
+      hasData: boolean;
+      status: string;
+      errorCode: string | null;
+      cliVersion: string | null;
+    }[];
     const ids = body.map((entry) => entry.id);
     expect(ids).toEqual(expect.arrayContaining(["claude", "codex", "antigravity", "copilot"]));
     expect(body.find((entry) => entry.id === "claude")?.hasData).toBe(true);
     expect(body.find((entry) => entry.id === "codex")?.hasData).toBe(false);
     expect(body.find((entry) => entry.id === "copilot")?.hasData).toBe(false);
+    expect(body.find((entry) => entry.id === "claude")).toMatchObject({
+      status: "healthy",
+      cliVersion: "claude 2.1.212",
+    });
+    expect(body.find((entry) => entry.id === "antigravity")).toMatchObject({
+      status: "failing",
+      errorCode: "authentication_required",
+      cliVersion: "1.1.7",
+    });
   });
 
   test("GET /api/usage/latest?provider=claude returns the recorded snapshot", async () => {

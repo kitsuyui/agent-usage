@@ -10,11 +10,12 @@ import {
   latestSnapshot,
   latestSnapshots,
   nextResets,
+  providerHealth,
   queryHistory,
 } from "../storage/repository.ts";
 
 /** Builds the MCP server exposing recorded usage data as read-only tools. */
-export function createMcpServer(db: PrismaClient): McpServer {
+export function createMcpServer(db: PrismaClient, staleAfterSeconds?: number): McpServer {
   const server = new McpServer({ name: "agent-usage", version: "0.1.0" });
 
   server.registerTool(
@@ -27,11 +28,12 @@ export function createMcpServer(db: PrismaClient): McpServer {
     async () => {
       const withData = new Set(await distinctProviders(db));
       return textResult(
-        listProviders().map((provider) => ({
+        await Promise.all(listProviders().map(async (provider) => ({
           id: provider.id,
           displayName: provider.displayName,
           hasData: withData.has(provider.id),
-        })),
+          ...(await providerHealth(db, provider.id, staleAfterSeconds)),
+        }))),
       );
     },
   );
@@ -111,7 +113,8 @@ export function createMcpServer(db: PrismaClient): McpServer {
 
 /** Starts the MCP server over stdio (the transport agent CLIs expect). */
 export async function startMcpStdioServer(db: PrismaClient): Promise<McpServer> {
-  const server = createMcpServer(db);
+  const intervalSeconds = Number(process.env.SAMPLE_INTERVAL_SECONDS ?? 900);
+  const server = createMcpServer(db, intervalSeconds * 2 + 60);
   await server.connect(new StdioServerTransport());
   return server;
 }

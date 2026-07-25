@@ -24,6 +24,8 @@ model Sample {
   observedAt DateTime
   ok         Boolean
   error      String?
+  errorCode  String?
+  cliVersion String?
   // Reset "tickets"/credits some providers report (e.g. Codex's manual
   // usage-limit resets). Provider-specific; nullable everywhere else.
   resetCredits Int?
@@ -33,6 +35,7 @@ model Sample {
   createdAt DateTime @default(now())
 
   @@index([provider, observedAt])
+  @@index([provider, ok, observedAt])
 }
 
 model Window {

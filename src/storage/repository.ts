@@ -3,6 +3,7 @@ import type { UsageSnapshot, UsageWindow } from "../domain/types.ts";
 import { toIsoSeconds } from "../domain/time.ts";
 
 type SampleWithWindows = Sample & { windows: Window[] };
+type WindowWithSample = Window & { sample: Pick<Sample, "cliVersion"> };
 
 /** Persists one snapshot (and its windows) as a new sample row. */
 export async function recordSnapshot(db: PrismaClient, snapshot: UsageSnapshot): Promise<void> {
@@ -13,6 +14,8 @@ export async function recordSnapshot(db: PrismaClient, snapshot: UsageSnapshot):
       observedAt,
       ok: snapshot.ok,
       error: snapshot.error ?? null,
+      errorCode: snapshot.errorCode ?? null,
+      cliVersion: snapshot.cliVersion ?? null,
       resetCredits: snapshot.resetCredits ?? null,
       windows: {
         create: snapshot.windows.map((window) => ({
@@ -67,6 +70,58 @@ export async function latestSnapshots(db: PrismaClient): Promise<UsageSnapshot[]
   return snapshots.filter((snapshot): snapshot is UsageSnapshot => snapshot !== undefined);
 }
 
+export type ProviderHealthStatus = "healthy" | "failing" | "stale" | "no_data";
+
+export interface ProviderHealth {
+  provider: string;
+  status: ProviderHealthStatus;
+  latestOk: boolean | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  stale: boolean;
+  errorCode: string | null;
+  error: string | null;
+  cliVersion: string | null;
+}
+
+/** Capture health for one provider, including failures that produced no windows. */
+export async function providerHealth(
+  db: PrismaClient,
+  provider: string,
+  staleAfterSeconds = 3_600,
+): Promise<ProviderHealth> {
+  const [latest, lastSuccess] = await Promise.all([
+    db.sample.findFirst({ where: { provider }, orderBy: { observedAt: "desc" } }),
+    db.sample.findFirst({ where: { provider, ok: true }, orderBy: { observedAt: "desc" } }),
+  ]);
+  const consecutiveFailures =
+    latest && !latest.ok
+      ? await db.sample.count({
+          where: {
+            provider,
+            ok: false,
+            ...(lastSuccess ? { observedAt: { gt: lastSuccess.observedAt } } : {}),
+          },
+        })
+      : 0;
+  const stale =
+    latest !== null &&
+    Date.now() - latest.observedAt.getTime() > staleAfterSeconds * 1_000;
+  return {
+    provider,
+    status: latest ? (latest.ok ? (stale ? "stale" : "healthy") : "failing") : "no_data",
+    latestOk: latest?.ok ?? null,
+    lastAttemptAt: latest ? toIsoSeconds(latest.observedAt) : null,
+    lastSuccessAt: lastSuccess ? toIsoSeconds(lastSuccess.observedAt) : null,
+    consecutiveFailures,
+    stale,
+    errorCode: latest?.errorCode ?? null,
+    error: latest?.error ?? null,
+    cliVersion: latest?.cliVersion ?? null,
+  };
+}
+
 export interface HistoryQuery {
   provider?: string;
   scope?: string;
@@ -91,6 +146,7 @@ export interface HistoryPoint {
   remainingValue: number | null;
   usedValue: number | null;
   attributes: Record<string, string>;
+  cliVersion: string | null;
   observedAt: string;
   remainingPercent: number | null;
   usedPercent: number | null;
@@ -118,6 +174,7 @@ export async function queryHistory(db: PrismaClient, query: HistoryQuery = {}): 
     },
     orderBy: { observedAt: "desc" },
     take: Math.min(query.limit ?? 2000, 100_000),
+    include: { sample: { select: { cliVersion: true } } },
   });
   return rows.reverse().map(toHistoryPoint);
 }
@@ -135,6 +192,7 @@ export interface NextReset {
   remainingValue: number | null;
   usedValue: number | null;
   attributes: Record<string, string>;
+  cliVersion: string | null;
   resetsAt: string | null;
   remainingPercent: number | null;
   usedPercent: number | null;
@@ -165,6 +223,7 @@ export async function nextResets(db: PrismaClient): Promise<NextReset[]> {
       remainingValue: window.remainingValue ?? null,
       usedValue: window.usedValue ?? null,
       attributes: window.attributes ?? {},
+      cliVersion: snapshot.cliVersion ?? null,
       resetsAt: window.resetsAt ?? null,
       remainingPercent: window.remainingPercent ?? null,
       usedPercent: window.usedPercent ?? null,
@@ -180,6 +239,8 @@ function toSnapshot(sample: SampleWithWindows): UsageSnapshot {
     ok: sample.ok,
     windows: sample.windows.map(toUsageWindow),
     ...(sample.resetCredits !== null ? { resetCredits: sample.resetCredits } : {}),
+    ...(sample.cliVersion !== null ? { cliVersion: sample.cliVersion } : {}),
+    ...(sample.errorCode !== null ? { errorCode: sample.errorCode } : {}),
     ...(sample.error !== null ? { error: sample.error } : {}),
   };
 }
@@ -252,7 +313,7 @@ function numericValue(point: HistoryPoint): number {
   return point.limitValue ?? 0;
 }
 
-function toHistoryPoint(row: Window): HistoryPoint {
+function toHistoryPoint(row: WindowWithSample): HistoryPoint {
   const attributes = parseAttributes(row.attributesJson);
   const identity = {
     provider: row.provider,
@@ -266,6 +327,7 @@ function toHistoryPoint(row: Window): HistoryPoint {
   return {
     ...identity,
     seriesId: seriesId(identity),
+    cliVersion: row.sample.cliVersion,
     observedAt: toIsoSeconds(row.observedAt),
     remainingPercent: row.remainingPercent,
     usedPercent: row.usedPercent,

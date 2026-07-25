@@ -79,10 +79,17 @@ function resolveSink(): { sink: SnapshotSink; db: PrismaClient | undefined } {
   return { sink: createLocalSink(db), db };
 }
 
-function resolveHttpOptions(db: PrismaClient): { db: PrismaClient; port: number; ingestToken?: string } {
+function resolveHttpOptions(db: PrismaClient): {
+  db: PrismaClient;
+  port: number;
+  ingestToken?: string;
+  staleAfterSeconds?: number;
+} {
+  const intervalSeconds = Number(process.env.SAMPLE_INTERVAL_SECONDS ?? 900);
   return {
     db,
     port: Number(process.env.HTTP_PORT ?? DEFAULT_HTTP_PORT),
+    staleAfterSeconds: intervalSeconds * 2 + 60,
     ...(process.env.INGEST_TOKEN ? { ingestToken: process.env.INGEST_TOKEN } : {}),
   };
 }

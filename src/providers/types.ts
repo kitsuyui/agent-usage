@@ -18,6 +18,8 @@ export interface TuiCaptureConfig {
 export interface UsageProvider {
   id: string;
   displayName: string;
+  /** Argument vector that prints the CLI version without starting its TUI. */
+  versionCommand: string[];
   tui: TuiCaptureConfig;
   /** Turns one captured TUI screen into a provider-neutral snapshot. */
   parse(raw: string, observedAt: string): UsageSnapshot;

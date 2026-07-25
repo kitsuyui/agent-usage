@@ -9,6 +9,7 @@ import {
   latestSnapshot,
   latestSnapshots,
   nextResets,
+  providerHealth,
   queryHistory,
   recordSnapshot,
 } from "../storage/repository.ts";
@@ -24,18 +25,22 @@ export interface HttpServerOptions {
    * put a proper auth layer (reverse proxy, VPN, ...) in front otherwise.
    */
   ingestToken?: string;
+  /** A successful collector becomes stale after this many seconds. */
+  staleAfterSeconds?: number;
 }
 
 /** Starts the HTTP API (and static frontend) server. */
 export function createHttpServer(options: HttpServerOptions) {
-  const { db, port, ingestToken } = options;
+  const { db, port, ingestToken, staleAfterSeconds } = options;
   return Bun.serve({
     port,
     async fetch(request) {
       const url = new URL(request.url);
       try {
         if (url.pathname === "/health") return json({ status: "ok" });
-        if (url.pathname === "/api/providers") return json(await providersPayload(db));
+        if (url.pathname === "/api/providers") {
+          return json(await providersPayload(db, staleAfterSeconds));
+        }
         if (url.pathname === "/api/usage/latest") {
           return json(await latestPayload(db, url.searchParams.get("provider")));
         }
@@ -71,13 +76,16 @@ async function ingestSample(db: PrismaClient, request: Request, ingestToken: str
   return json({ status: "recorded" }, 201);
 }
 
-async function providersPayload(db: PrismaClient) {
+async function providersPayload(db: PrismaClient, staleAfterSeconds?: number) {
   const withData = new Set(await distinctProviders(db));
-  return listProviders().map((provider) => ({
-    id: provider.id,
-    displayName: provider.displayName,
-    hasData: withData.has(provider.id),
-  }));
+  return Promise.all(
+    listProviders().map(async (provider) => ({
+      id: provider.id,
+      displayName: provider.displayName,
+      hasData: withData.has(provider.id),
+      ...(await providerHealth(db, provider.id, staleAfterSeconds)),
+    })),
+  );
 }
 
 async function latestPayload(db: PrismaClient, provider: string | null) {

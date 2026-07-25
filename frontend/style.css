@@ -8,6 +8,7 @@
   --accent: #6ea8fe;
   --danger: #f28b82;
   --ok: #7ee7a8;
+  --warning: #f2b56b;
   font-family:
     system-ui,
     -apple-system,
@@ -121,6 +122,42 @@ th {
 
 .remaining-ok {
   color: var(--ok);
+}
+
+.status {
+  display: inline-block;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.status-healthy {
+  color: var(--ok);
+}
+
+.status-failing {
+  color: var(--danger);
+}
+
+.status-stale {
+  color: var(--warning);
+}
+
+.status-no_data {
+  color: var(--muted);
+}
+
+.error-detail {
+  max-width: 16rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+td code {
+  white-space: nowrap;
 }
 
 .empty-state {

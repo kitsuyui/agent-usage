@@ -5,6 +5,15 @@ interface ProviderInfo {
   id: string;
   displayName: string;
   hasData: boolean;
+  status: "healthy" | "failing" | "stale" | "no_data";
+  latestOk: boolean | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  stale: boolean;
+  errorCode: string | null;
+  error: string | null;
+  cliVersion: string | null;
 }
 
 interface HistoryPoint {
@@ -20,6 +29,7 @@ interface HistoryPoint {
   remainingValue?: number | null;
   usedValue?: number | null;
   attributes?: Record<string, string>;
+  cliVersion?: string | null;
   observedAt: string;
   remainingPercent: number | null;
   usedPercent: number | null;
@@ -63,13 +73,15 @@ async function main(): Promise<void> {
 async function refresh(): Promise<void> {
   const resetsEl = document.getElementById("resets");
   const chartsEl = document.getElementById("charts");
-  if (!resetsEl || !chartsEl) return;
+  const collectorsEl = document.getElementById("collectors");
+  if (!resetsEl || !chartsEl || !collectorsEl) return;
 
   try {
     const [providers, resets] = await Promise.all([
       fetchJson<ProviderInfo[]>("/api/providers"),
       fetchJson<NextReset[]>("/api/usage/next-resets"),
     ]);
+    renderCollectors(collectorsEl, providers);
     renderResets(resetsEl, resets);
 
     const withData = providers.filter((provider) => provider.hasData);
@@ -88,6 +100,37 @@ async function refresh(): Promise<void> {
   } catch (error) {
     console.error(error);
   }
+}
+
+function renderCollectors(container: HTMLElement, providers: ProviderInfo[]): void {
+  const rows = providers
+    .map(
+      (provider) => `<tr>
+        <td>${escapeHtml(provider.displayName)}</td>
+        <td><span class="status status-${escapeHtml(provider.status)}">${escapeHtml(statusLabel(provider.status))}</span></td>
+        <td><code>${escapeHtml(provider.cliVersion ?? "Unavailable")}</code></td>
+        <td>${formatTimestamp(provider.lastAttemptAt)}</td>
+        <td>${formatTimestamp(provider.lastSuccessAt)}</td>
+        <td>${provider.consecutiveFailures || "—"}</td>
+        <td class="error-detail">${escapeHtml(provider.errorCode ?? provider.error ?? "—")}</td>
+      </tr>`,
+    )
+    .join("");
+  container.innerHTML = card(
+    "Collector status",
+    `<div class="table-scroll"><table>
+      <thead><tr><th>Provider</th><th>Status</th><th>CLI version</th><th>Last attempt</th><th>Last success</th><th>Failures</th><th>Error</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`,
+  );
+}
+
+function statusLabel(status: ProviderInfo["status"]): string {
+  return status === "no_data" ? "No data" : status[0]!.toUpperCase() + status.slice(1);
+}
+
+function formatTimestamp(value: string | null): string {
+  return value ? new Date(value).toLocaleString() : "—";
 }
 
 async function fetchJson<T>(path: string): Promise<T> {

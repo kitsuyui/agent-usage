@@ -5,9 +5,10 @@ import { parseClaudeUsage } from "./parse.ts";
 export const claudeProvider: UsageProvider = {
   id: "claude",
   displayName: "Claude Code",
+  versionCommand: ["claude", "--version"],
   tui: {
     command: "claude",
-    readyPattern: /shortcuts/,
+    readyPattern: /Claude Code v\d/,
     slashCommand: "/usage",
     expectedPattern: /% used/,
     interstitials: DEFAULT_INTERSTITIALS,

@@ -1,8 +1,9 @@
 import { snapshotFromWindows, type UsageSnapshot, type UsageWindow } from "../../domain/types.ts";
 import { nextUtcMonthStart } from "../../domain/reset-time.ts";
-import { usedWindow } from "../../domain/window-builder.ts";
+import { measuredWindow, usedWindow } from "../../domain/window-builder.ts";
 
 const PLAN_PERCENT = /Plan[^\n]*?(\d+(?:\.\d+)?)% used/;
+const AI_CREDITS = /(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s+AIC/;
 
 /**
  * Parses `copilot`'s `/usage` TUI screen into a provider-neutral snapshot.
@@ -13,15 +14,33 @@ const PLAN_PERCENT = /Plan[^\n]*?(\d+(?:\.\d+)?)% used/;
  * that's computed directly rather than scraped (see `nextUtcMonthStart`).
  */
 export function parseCopilotUsage(raw: string, observedAt: string): UsageSnapshot {
-  const match = PLAN_PERCENT.exec(raw);
+  const percentMatch = PLAN_PERCENT.exec(raw);
+  const creditMatch = AI_CREDITS.exec(raw);
   const windows: UsageWindow[] = [];
-  if (match) {
+  const resetsAt = nextUtcMonthStart(observedAt);
+  if (percentMatch) {
     windows.push(
       usedWindow({
         window: "monthly",
-        usedPercent: Number(match[1]),
+        usedPercent: Number(percentMatch[1]),
         observedAt,
-        resetsAt: nextUtcMonthStart(observedAt),
+        resetsAt,
+      }),
+    );
+  }
+  if (creditMatch) {
+    const usedValue = Number(creditMatch[1]);
+    const limitValue = Number(creditMatch[2]);
+    windows.push(
+      measuredWindow({
+        window: "monthly",
+        metric: "credits",
+        unit: "AIC",
+        usedValue,
+        limitValue,
+        remainingValue: Math.max(0, limitValue - usedValue),
+        observedAt,
+        resetsAt,
       }),
     );
   }

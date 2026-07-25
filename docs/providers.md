@@ -1,7 +1,8 @@
 # Adding a provider
 
 A provider is a `UsageProvider` (`src/providers/types.ts`): an id, a display
-name, a TUI capture config, and a `parse` function. Nothing outside
+name, a non-interactive `versionCommand`, a TUI capture config, and a `parse`
+function. Nothing outside
 `src/providers/` needs to change — storage, HTTP, MCP, and the dashboard all
 work against `UsageSnapshot`/`UsageWindow`, not provider-specific types.
 
@@ -48,6 +49,9 @@ seconds)` — e.g. in the provider's `index.ts`, before it's registered.
 In the provider's `index.ts`, fill in a `TuiCaptureConfig`
 (`src/providers/types.ts`):
 
+- `versionCommand`: a non-interactive version invocation such as
+  `["codex", "--version"]`. Its first non-empty output line is stored on
+  every sample, including failed captures.
 - `command`: the shell command that launches the CLI.
 - `readyPattern`: text that appears once the CLI is ready for input.
 - `slashCommand`: the command that opens the usage screen (e.g. `/usage`).
