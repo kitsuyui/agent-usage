@@ -23,6 +23,15 @@ export async function recordSnapshot(db: PrismaClient, snapshot: UsageSnapshot):
           usedPercent: window.usedPercent ?? null,
           resetsRaw: window.resetsRaw ?? null,
           resetsAt: window.resetsAt ? new Date(window.resetsAt) : null,
+          metric: window.metric ?? "quota",
+          unit:
+            window.unit ??
+            (window.remainingPercent !== undefined || window.usedPercent !== undefined ? "percent" : null),
+          value: window.value ?? null,
+          limitValue: window.limitValue ?? null,
+          remainingValue: window.remainingValue ?? null,
+          usedValue: window.usedValue ?? null,
+          attributesJson: window.attributes ? canonicalAttributes(window.attributes) : null,
           provider: snapshot.provider,
           observedAt,
         })),
@@ -60,7 +69,10 @@ export async function latestSnapshots(db: PrismaClient): Promise<UsageSnapshot[]
 
 export interface HistoryQuery {
   provider?: string;
+  scope?: string;
   window?: string;
+  metric?: string;
+  unit?: string;
   since?: string;
   until?: string;
   limit?: number;
@@ -68,9 +80,17 @@ export interface HistoryQuery {
 
 export interface HistoryPoint {
   provider: string;
+  seriesId: string;
   scope: string | null;
   window: string;
   windowSeconds: number | null;
+  metric: string;
+  unit: string | null;
+  value: number | null;
+  limitValue: number | null;
+  remainingValue: number | null;
+  usedValue: number | null;
+  attributes: Record<string, string>;
   observedAt: string;
   remainingPercent: number | null;
   usedPercent: number | null;
@@ -83,7 +103,10 @@ export async function queryHistory(db: PrismaClient, query: HistoryQuery = {}): 
   const rows = await db.window.findMany({
     where: {
       ...(query.provider ? { provider: query.provider } : {}),
+      ...(query.scope ? { scope: query.scope } : {}),
       ...(query.window ? { window: query.window } : {}),
+      ...(query.metric ? { metric: query.metric } : {}),
+      ...(query.unit ? { unit: query.unit } : {}),
       ...(query.since || query.until
         ? {
             observedAt: {
@@ -93,27 +116,25 @@ export async function queryHistory(db: PrismaClient, query: HistoryQuery = {}): 
           }
         : {}),
     },
-    orderBy: { observedAt: "asc" },
-    take: query.limit ?? 2000,
+    orderBy: { observedAt: "desc" },
+    take: Math.min(query.limit ?? 2000, 100_000),
   });
-  return rows.map((row) => ({
-    provider: row.provider,
-    scope: row.scope,
-    window: row.window,
-    windowSeconds: row.windowSeconds,
-    observedAt: toIsoSeconds(row.observedAt),
-    remainingPercent: row.remainingPercent,
-    usedPercent: row.usedPercent,
-    resetsRaw: row.resetsRaw,
-    resetsAt: row.resetsAt ? toIsoSeconds(row.resetsAt) : null,
-  }));
+  return rows.reverse().map(toHistoryPoint);
 }
 
 export interface NextReset {
   provider: string;
+  seriesId: string;
   scope: string | null;
   window: string;
   windowSeconds: number | null;
+  metric: string;
+  unit: string | null;
+  value: number | null;
+  limitValue: number | null;
+  remainingValue: number | null;
+  usedValue: number | null;
+  attributes: Record<string, string>;
   resetsAt: string | null;
   remainingPercent: number | null;
   usedPercent: number | null;
@@ -125,9 +146,25 @@ export async function nextResets(db: PrismaClient): Promise<NextReset[]> {
   return snapshots.flatMap((snapshot) =>
     snapshot.windows.map((window) => ({
       provider: snapshot.provider,
+      seriesId: seriesId({
+        provider: snapshot.provider,
+        scope: window.scope ?? null,
+        window: window.window,
+        windowSeconds: window.windowSeconds ?? null,
+        metric: window.metric ?? "quota",
+        unit: window.unit ?? null,
+        attributes: window.attributes ?? {},
+      }),
       scope: window.scope ?? null,
       window: window.window,
       windowSeconds: window.windowSeconds ?? null,
+      metric: window.metric ?? "quota",
+      unit: window.unit ?? null,
+      value: window.value ?? null,
+      limitValue: window.limitValue ?? null,
+      remainingValue: window.remainingValue ?? null,
+      usedValue: window.usedValue ?? null,
+      attributes: window.attributes ?? {},
       resetsAt: window.resetsAt ?? null,
       remainingPercent: window.remainingPercent ?? null,
       usedPercent: window.usedPercent ?? null,
@@ -156,5 +193,129 @@ function toUsageWindow(row: Window): UsageWindow {
     ...(row.resetsRaw !== null ? { resetsRaw: row.resetsRaw } : {}),
     ...(row.resetsAt !== null ? { resetsAt: toIsoSeconds(row.resetsAt) } : {}),
     ...(row.windowSeconds !== null ? { windowSeconds: row.windowSeconds } : {}),
+    metric: row.metric,
+    ...(row.unit !== null ? { unit: row.unit } : {}),
+    ...(row.value !== null ? { value: row.value } : {}),
+    ...(row.limitValue !== null ? { limitValue: row.limitValue } : {}),
+    ...(row.remainingValue !== null ? { remainingValue: row.remainingValue } : {}),
+    ...(row.usedValue !== null ? { usedValue: row.usedValue } : {}),
+    ...attributesFromJson(row.attributesJson),
   };
+}
+
+/** Keeps at most `maxPoints` observations per logical series while retaining
+ * endpoints and local extrema. The result remains chronological. */
+export function downsampleHistory(points: HistoryPoint[], maxPoints: number): HistoryPoint[] {
+  if (maxPoints < 3) throw new Error("maxPoints must be at least 3");
+  const grouped = new Map<string, HistoryPoint[]>();
+  for (const point of points) {
+    const series = grouped.get(point.seriesId);
+    if (series) series.push(point);
+    else grouped.set(point.seriesId, [point]);
+  }
+  return [...grouped.values()]
+    .flatMap((series) => downsampleSeries(series, maxPoints))
+    .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+}
+
+function downsampleSeries(points: HistoryPoint[], maxPoints: number): HistoryPoint[] {
+  if (points.length <= maxPoints) return points;
+  const first = points[0]!;
+  const last = points.at(-1)!;
+  const interior = points.slice(1, -1);
+  const bucketCount = Math.max(1, Math.floor((maxPoints - 2) / 2));
+  const selected: HistoryPoint[] = [first];
+  for (let bucket = 0; bucket < bucketCount; bucket += 1) {
+    const start = Math.floor((bucket * interior.length) / bucketCount);
+    const end = Math.floor(((bucket + 1) * interior.length) / bucketCount);
+    const slice = interior.slice(start, Math.max(start + 1, end));
+    const extrema = [...slice]
+      .sort((a, b) => numericValue(a) - numericValue(b))
+      .filter((point, index, all) => index === 0 || point !== all.at(-1))
+      .slice(0, 1)
+      .concat(slice.reduce((max, point) => (numericValue(point) > numericValue(max) ? point : max), slice[0]!))
+      .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+    for (const point of extrema) {
+      if (selected.length < maxPoints - 1 && !selected.includes(point)) selected.push(point);
+    }
+  }
+  selected.push(last);
+  return selected.sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+}
+
+function numericValue(point: HistoryPoint): number {
+  if (point.remainingPercent !== null) return point.remainingPercent;
+  if (point.usedPercent !== null) return 100 - point.usedPercent;
+  if (point.value !== null) return point.value;
+  if (point.remainingValue !== null) return point.remainingValue;
+  if (point.usedValue !== null) return point.usedValue;
+  return point.limitValue ?? 0;
+}
+
+function toHistoryPoint(row: Window): HistoryPoint {
+  const attributes = parseAttributes(row.attributesJson);
+  const identity = {
+    provider: row.provider,
+    scope: row.scope,
+    window: row.window,
+    windowSeconds: row.windowSeconds,
+    metric: row.metric,
+    unit: row.unit,
+    attributes,
+  };
+  return {
+    ...identity,
+    seriesId: seriesId(identity),
+    observedAt: toIsoSeconds(row.observedAt),
+    remainingPercent: row.remainingPercent,
+    usedPercent: row.usedPercent,
+    value: row.value,
+    limitValue: row.limitValue,
+    remainingValue: row.remainingValue,
+    usedValue: row.usedValue,
+    resetsRaw: row.resetsRaw,
+    resetsAt: row.resetsAt ? toIsoSeconds(row.resetsAt) : null,
+  };
+}
+
+function seriesId(identity: {
+  provider: string;
+  scope: string | null;
+  window: string;
+  windowSeconds: number | null;
+  metric: string;
+  unit: string | null;
+  attributes: Record<string, string>;
+}): string {
+  return JSON.stringify([
+    identity.provider,
+    identity.scope ?? "",
+    identity.window.trim().toLowerCase(),
+    identity.windowSeconds,
+    identity.metric.trim().toLowerCase(),
+    identity.unit?.trim().toLowerCase() ?? "",
+    Object.entries(identity.attributes).sort(([left], [right]) => left.localeCompare(right)),
+  ]);
+}
+
+function canonicalAttributes(attributes: Record<string, string>): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(attributes).sort(([left], [right]) => left.localeCompare(right))));
+}
+
+function parseAttributes(value: string | null): Record<string, string> {
+  if (!value) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function attributesFromJson(value: string | null): Pick<UsageWindow, "attributes"> {
+  const attributes = parseAttributes(value);
+  return Object.keys(attributes).length > 0 ? { attributes } : {};
 }

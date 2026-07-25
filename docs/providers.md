@@ -14,6 +14,18 @@ timestamp, return a `UsageSnapshot` (`src/domain/types.ts`). Use
 each window — they resolve `resetsAt` and `windowSeconds` for you from
 `resetsRaw` and the window label.
 
+Use `measuredWindow` when the provider reports an absolute value rather than
+a percentage. `metric` and `unit` are intentionally free text, and
+`attributes` can identify dimensions such as model, plan, billing category,
+or tier. Do not add a model-name enum or a single mutable pricing table:
+record provider-reported prices as timestamped measurements so later price
+changes do not rewrite the meaning of historical data.
+
+Only emit windows and limits that the provider actually reports. In
+particular, do not synthesize a familiar time window from product
+documentation when the authenticated CLI output no longer exposes it; the
+absence may reflect the account, plan, model, or a product change.
+
 This function is pure (no I/O), so write its tests first against real
 captured text (see `tests/providers/parse.test.ts` for the pattern) before
 worrying about how to actually capture that text from the live CLI.

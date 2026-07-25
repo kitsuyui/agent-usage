@@ -10,6 +10,13 @@ export const usageWindowSchema = z.object({
   resetsRaw: z.string().optional(),
   resetsAt: z.string().optional(),
   windowSeconds: z.number().optional(),
+  metric: z.string().optional(),
+  unit: z.string().optional(),
+  value: z.number().optional(),
+  limitValue: z.number().optional(),
+  remainingValue: z.number().optional(),
+  usedValue: z.number().optional(),
+  attributes: z.record(z.string()).optional(),
 });
 
 export const usageSnapshotSchema = z.object({
@@ -51,5 +58,12 @@ function toUsageWindow(parsed: ParsedWindow): UsageWindow {
     ...(parsed.resetsRaw !== undefined ? { resetsRaw: parsed.resetsRaw } : {}),
     ...(parsed.resetsAt !== undefined ? { resetsAt: parsed.resetsAt } : {}),
     ...(parsed.windowSeconds !== undefined ? { windowSeconds: parsed.windowSeconds } : {}),
+    ...(parsed.metric !== undefined ? { metric: parsed.metric } : {}),
+    ...(parsed.unit !== undefined ? { unit: parsed.unit } : {}),
+    ...(parsed.value !== undefined ? { value: parsed.value } : {}),
+    ...(parsed.limitValue !== undefined ? { limitValue: parsed.limitValue } : {}),
+    ...(parsed.remainingValue !== undefined ? { remainingValue: parsed.remainingValue } : {}),
+    ...(parsed.usedValue !== undefined ? { usedValue: parsed.usedValue } : {}),
+    ...(parsed.attributes !== undefined ? { attributes: parsed.attributes } : {}),
   };
 }

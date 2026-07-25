@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PrismaClient } from "@prisma/client";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import {
+  downsampleHistory,
   distinctProviders,
   latestSnapshot,
   nextResets,
@@ -9,7 +10,7 @@ import {
   recordSnapshot,
 } from "../../src/storage/repository.ts";
 import { snapshotFromWindows } from "../../src/domain/types.ts";
-import { remainingWindow, usedWindow } from "../../src/domain/window-builder.ts";
+import { measuredWindow, remainingWindow, usedWindow } from "../../src/domain/window-builder.ts";
 
 const ROOT = `${import.meta.dir}/../..`;
 const DB_PATH = `${ROOT}/data/test-storage.db`;
@@ -20,6 +21,7 @@ let db: PrismaClient;
 beforeAll(() => {
   mkdirSync(`${ROOT}/data`, { recursive: true });
   if (existsSync(DB_PATH)) rmSync(DB_PATH);
+  closeSync(openSync(DB_PATH, "w"));
   const result = Bun.spawnSync(["bunx", "prisma", "db", "push", "--skip-generate", "--accept-data-loss"], {
     cwd: ROOT,
     env: { ...process.env, DATABASE_URL },
@@ -75,6 +77,76 @@ describe("repository", () => {
     const points = await queryHistory(db, { provider: "claude", window: "session" });
     expect(points.length).toBeGreaterThanOrEqual(2);
     expect(points.every((point) => point.provider === "claude")).toBe(true);
+  });
+
+  test("a bounded history query returns the newest points in chronological order", async () => {
+    for (const hour of [1, 2, 3]) {
+      const observedAt = `2026-07-19T0${hour}:00:00Z`;
+      await recordSnapshot(
+        db,
+        snapshotFromWindows("bounded", observedAt, [
+          usedWindow({ window: "session", usedPercent: hour * 10, observedAt }),
+        ]),
+      );
+    }
+
+    const points = await queryHistory(db, { provider: "bounded", limit: 2 });
+    expect(points.map((point) => point.observedAt)).toEqual([
+      "2026-07-19T02:00:00Z",
+      "2026-07-19T03:00:00Z",
+    ]);
+  });
+
+  test("stores open-ended model and pricing measurements without a schema enum", async () => {
+    const observedAt = "2026-07-20T00:00:00Z";
+    await recordSnapshot(
+      db,
+      snapshotFromWindows("pricing-source", observedAt, [
+        measuredWindow({
+          window: "effective",
+          metric: "price",
+          unit: "USD/million_tokens",
+          value: 1.25,
+          attributes: { model: "future-model", category: "input", tier: "standard" },
+          observedAt,
+        }),
+      ]),
+    );
+
+    const [point] = await queryHistory(db, { provider: "pricing-source", metric: "price" });
+    expect(point).toMatchObject({
+      value: 1.25,
+      unit: "USD/million_tokens",
+      attributes: { model: "future-model", category: "input", tier: "standard" },
+    });
+  });
+
+  test("downsamples each series independently while retaining endpoints and extrema", () => {
+    const points = Array.from({ length: 20 }, (_, index) => ({
+      provider: "test",
+      seriesId: "series-a",
+      scope: null,
+      window: "daily",
+      windowSeconds: 86_400,
+      metric: "requests",
+      unit: "request",
+      value: index === 10 ? 1_000 : index,
+      limitValue: null,
+      remainingValue: null,
+      usedValue: null,
+      attributes: {},
+      observedAt: `2026-07-21T${String(index).padStart(2, "0")}:00:00Z`,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsRaw: null,
+      resetsAt: null,
+    }));
+
+    const sampled = downsampleHistory(points, 6);
+    expect(sampled.length).toBeLessThanOrEqual(6);
+    expect(sampled[0]?.observedAt).toBe(points[0]?.observedAt);
+    expect(sampled.at(-1)?.observedAt).toBe(points.at(-1)?.observedAt);
+    expect(sampled.some((point) => point.value === 1_000)).toBe(true);
   });
 
   test("an unknown provider has no latest snapshot", async () => {

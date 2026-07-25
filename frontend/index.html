@@ -9,8 +9,19 @@
   <body>
     <main id="app">
       <header>
-        <h1>Agent Usage</h1>
-        <p class="subtitle">Rate-limit / usage history for local agent CLIs, refreshed every minute.</p>
+        <div>
+          <h1>Agent Usage</h1>
+          <p class="subtitle">Rate-limit / usage history for local agent CLIs, refreshed every minute.</p>
+        </div>
+        <label class="range-picker">
+          History
+          <select id="history-range">
+            <option value="10h">Last 10 hours</option>
+            <option value="14d" selected>Last 14 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+        </label>
       </header>
       <section id="resets" aria-label="Next reset times"></section>
       <section id="charts" aria-label="Usage history charts"></section>

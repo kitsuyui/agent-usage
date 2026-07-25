@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PrismaClient } from "@prisma/client";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createHttpServer } from "../../src/server/http.ts";
 import { snapshotFromWindows } from "../../src/domain/types.ts";
 import { usedWindow } from "../../src/domain/window-builder.ts";
@@ -19,6 +19,7 @@ beforeAll(async () => {
   registerBuiltinProviders();
   mkdirSync(`${ROOT}/data`, { recursive: true });
   if (existsSync(DB_PATH)) rmSync(DB_PATH);
+  closeSync(openSync(DB_PATH, "w"));
   const push = Bun.spawnSync(["bunx", "prisma", "db", "push", "--skip-generate", "--accept-data-loss"], {
     cwd: ROOT,
     env: { ...process.env, DATABASE_URL },
@@ -71,6 +72,25 @@ describe("HTTP API", () => {
     const body = (await response.json()) as { provider: string }[];
     expect(body.length).toBeGreaterThan(0);
     expect(body.every((point) => point.provider === "claude")).toBe(true);
+  });
+
+  test("GET /api/usage/history accepts a relative range anchored by until", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/usage/history?provider=claude&until=2026-07-18T10:00:00Z&range=2h&maxPoints=10`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { observedAt: string }[];
+    expect(body.map((point) => point.observedAt)).toEqual(["2026-07-18T09:00:00Z"]);
+  });
+
+  test("GET /api/usage/history rejects conflicting and malformed bounds", async () => {
+    const conflict = await fetch(
+      `${baseUrl}/api/usage/history?since=2026-07-18T08:00:00Z&range=10h`,
+    );
+    expect(conflict.status).toBe(400);
+
+    const malformed = await fetch(`${baseUrl}/api/usage/history?range=forever`);
+    expect(malformed.status).toBe(400);
   });
 
   test("GET /api/usage/next-resets returns an array", async () => {
@@ -130,6 +150,7 @@ describe("HTTP API ingest auth", () => {
 
   beforeAll(() => {
     if (existsSync(AUTH_DB_PATH)) rmSync(AUTH_DB_PATH);
+    closeSync(openSync(AUTH_DB_PATH, "w"));
     const push = Bun.spawnSync(["bunx", "prisma", "db", "push", "--skip-generate", "--accept-data-loss"], {
       cwd: ROOT,
       env: { ...process.env, DATABASE_URL: AUTH_DATABASE_URL },

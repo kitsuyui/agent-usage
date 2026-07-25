@@ -30,7 +30,8 @@ provider computes `resetsAt` directly instead of parsing it — see
   `/api/usage/next-resets`) and an MCP server exposing the same data as tools,
   so both scripts and agents can read it.
 - A dependency-free static dashboard (plain HTML/CSS/TS, hand-rolled SVG
-  charts) served by the same HTTP server.
+  charts) served by the same HTTP server. It defaults to 14 days for trend
+  visibility and can switch to a focused 10-hour view or longer ranges.
 - New providers are a config object + a parser function away — see
   [`docs/providers.md`](docs/providers.md).
 
@@ -54,6 +55,23 @@ The dashboard is served at `http://localhost:7979/` by default (see
 
 `bun run dev` shells out to the real `claude`/`codex`/`agy`/`copilot` CLIs on
 your machine (via tmux) — only run it where you actually want that.
+
+## History queries
+
+`GET /api/usage/history` accepts `provider`, `scope`, `window`, `metric`, and
+`unit` filters. Bound the time axis with ISO-8601 `since`/`until`, or use a
+relative `range` such as `10h`, `14d`, or `4w` (`range` may be anchored by
+`until`). Results are always the newest matching observations, returned in
+chronological order:
+
+```text
+/api/usage/history?provider=codex&range=14d&limit=100000&maxPoints=480
+```
+
+`maxPoints` downsamples each logical series independently while retaining its
+endpoints and local extrema. This keeps browser and MCP payloads bounded as
+the database grows without making long-term retention inaccessible. The MCP
+`get_usage_history` tool exposes the same filters and downsampling option.
 
 ## Deployment modes
 
