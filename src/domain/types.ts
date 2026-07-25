@@ -40,6 +40,10 @@ export interface UsageSnapshot {
   provider: string;
   ok: boolean;
   windows: UsageWindow[];
+  /** Version string reported by the CLI executable used for this capture. */
+  cliVersion?: string;
+  /** Stable machine-readable reason for an unsuccessful capture. */
+  errorCode?: string;
   /** Manual reset credits/tickets some providers report (e.g. Codex). */
   resetCredits?: number;
   error?: string;
@@ -49,8 +53,9 @@ export function emptySnapshot(
   provider: string,
   observedAt: string,
   error: string,
+  errorCode = "capture_failed",
 ): UsageSnapshot {
-  return { schemaVersion: 1, observedAt, provider, ok: false, windows: [], error };
+  return { schemaVersion: 1, observedAt, provider, ok: false, windows: [], error, errorCode };
 }
 
 export function snapshotFromWindows(

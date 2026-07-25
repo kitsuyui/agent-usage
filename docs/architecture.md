@@ -85,7 +85,8 @@ doesn't need to change either way.
 ## Storage shape
 
 A `Sample` is one observation of one provider at one point in time (`ok`,
-`error`, `resetCredits` if the provider reports manual reset tickets). It fans
+stable `errorCode`, diagnostic `error`, `cliVersion`, and `resetCredits` if
+the provider reports manual reset tickets). It fans
 out into zero or more `Window` rows — one per rate-limit window the provider
 reported (e.g. Claude's "session" and "week", Codex's "5h" and "Weekly").
 Splitting these lets a failed/partial capture still be recorded (as a sample
@@ -93,6 +94,13 @@ with no windows) without losing the attempt, and keeps window shape
 (labels, how many, whether they're scoped to a sub-model) entirely
 provider-defined — adding a provider with a different window shape never
 requires a schema migration. See `prisma/schema.prisma`.
+
+The CLI version belongs to the `Sample`, not the provider definition:
+upgrades can change the captured UI and parser behavior between adjacent
+observations. Provider health is derived from every attempt, including
+zero-window failures, so an old successful window cannot conceal a login
+failure. A successful collector whose latest attempt exceeds the configured
+sampling grace period is reported as `stale`.
 
 Each `Window` is also a provider-neutral measurement:
 

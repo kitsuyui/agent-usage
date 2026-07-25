@@ -27,6 +27,23 @@ describe("parseClaudeUsage", () => {
     expect(snapshot.windows[0]).toMatchObject({ scope: "Opus 4.8", window: "week", usedPercent: 61 });
   });
 
+  test("parses the current Claude screen including a model-specific weekly quota", () => {
+    const raw = [
+      "Current session",
+      "0% used",
+      "Resets 10:30pm (Asia/Tokyo)",
+      "Current week (all models)",
+      "0% used",
+      "Resets Jul 28",
+      "Current week (Fable)",
+      "0% used",
+      "Resets Jul 28",
+    ].join("\n");
+    const snapshot = parseClaudeUsage(raw, OBSERVED);
+    expect(snapshot.windows).toHaveLength(3);
+    expect(snapshot.windows[2]).toMatchObject({ scope: "Fable", window: "week", usedPercent: 0 });
+  });
+
   test("no windows found yields ok: false", () => {
     const snapshot = parseClaudeUsage("nothing usage-shaped here", OBSERVED);
     expect(snapshot.ok).toBe(false);
@@ -114,8 +131,16 @@ describe("parseCopilotUsage", () => {
   test("extracts the monthly plan usage with a computed UTC month-boundary reset", () => {
     const snapshot = parseCopilotUsage(raw, OBSERVED);
     expect(snapshot.provider).toBe("copilot");
-    expect(snapshot.windows).toHaveLength(1);
+    expect(snapshot.windows).toHaveLength(2);
     expect(snapshot.windows[0]).toMatchObject({ window: "monthly", usedPercent: 0 });
+    expect(snapshot.windows[1]).toMatchObject({
+      window: "monthly",
+      metric: "credits",
+      unit: "AIC",
+      usedValue: 0,
+      limitValue: 200,
+      remainingValue: 200,
+    });
     // No resetsRaw is present in the source text — the reset time is a fixed
     // rule (00:00 UTC on the 1st), not scraped.
     expect(snapshot.windows[0]?.resetsRaw).toBeUndefined();

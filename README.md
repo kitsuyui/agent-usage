@@ -23,6 +23,10 @@ provider computes `resetsAt` directly instead of parsing it — see
 
 - Periodic sampling of every registered provider, stored as a time series in
   SQLite (via Prisma) — not just the latest reading.
+- Every capture attempt records collector health, a stable failure code, and,
+  when the CLI's version command succeeds, the version that produced it.
+  Authentication failures and stale collectors are visible in both the API
+  and dashboard.
 - Resolves each provider's raw "resets in..." text into an absolute
   timestamp, so you can ask "when does this actually reset" instead of doing
   the math yourself.
@@ -72,6 +76,14 @@ chronological order:
 endpoints and local extrema. This keeps browser and MCP payloads bounded as
 the database grows without making long-term retention inaccessible. The MCP
 `get_usage_history` tool exposes the same filters and downsampling option.
+Each history point also includes `cliVersion`, so a behavior change can be
+correlated with the exact CLI release that generated the observation.
+`cliVersion` is `null` when the CLI cannot report its version.
+
+`GET /api/providers` reports current collector health: `status`
+(`healthy`, `failing`, `stale`, or `no_data`), the last attempt and success
+times, consecutive failures, the latest stable `errorCode`, and `cliVersion`.
+The dashboard refreshes this table every minute.
 
 ## Deployment modes
 

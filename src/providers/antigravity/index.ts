@@ -5,6 +5,7 @@ import { parseAntigravityUsage } from "./parse.ts";
 export const antigravityProvider: UsageProvider = {
   id: "antigravity",
   displayName: "Antigravity",
+  versionCommand: ["agy", "--version"],
   tui: {
     command: "agy",
     readyPattern: /shortcuts/,

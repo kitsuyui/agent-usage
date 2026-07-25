@@ -6,10 +6,11 @@ import {
   distinctProviders,
   latestSnapshot,
   nextResets,
+  providerHealth,
   queryHistory,
   recordSnapshot,
 } from "../../src/storage/repository.ts";
-import { snapshotFromWindows } from "../../src/domain/types.ts";
+import { emptySnapshot, snapshotFromWindows } from "../../src/domain/types.ts";
 import { measuredWindow, remainingWindow, usedWindow } from "../../src/domain/window-builder.ts";
 
 const ROOT = `${import.meta.dir}/../..`;
@@ -79,6 +80,61 @@ describe("repository", () => {
     expect(points.every((point) => point.provider === "claude")).toBe(true);
   });
 
+  test("records capture provenance and reports consecutive failures", async () => {
+    const successAt = "2026-07-25T08:00:00Z";
+    const success = snapshotFromWindows("health-test", successAt, [
+      usedWindow({ window: "session", usedPercent: 10, observedAt: successAt }),
+    ]);
+    await recordSnapshot(db, { ...success, cliVersion: "tool 1.2.3" });
+    await recordSnapshot(
+      db,
+      {
+        ...emptySnapshot(
+          "health-test",
+          "2026-07-25T08:15:00Z",
+          "provider authentication is required",
+          "authentication_required",
+        ),
+        cliVersion: "tool 1.2.4",
+      },
+    );
+    await recordSnapshot(
+      db,
+      {
+        ...emptySnapshot(
+          "health-test",
+          "2026-07-25T08:30:00Z",
+          "provider authentication is required",
+          "authentication_required",
+        ),
+        cliVersion: "tool 1.2.4",
+      },
+    );
+
+    expect(await latestSnapshot(db, "health-test")).toMatchObject({
+      ok: false,
+      errorCode: "authentication_required",
+      cliVersion: "tool 1.2.4",
+    });
+    expect(await providerHealth(db, "health-test", 60 * 60 * 24 * 365)).toMatchObject({
+      status: "failing",
+      lastSuccessAt: successAt,
+      consecutiveFailures: 2,
+      errorCode: "authentication_required",
+      cliVersion: "tool 1.2.4",
+    });
+    const [point] = await queryHistory(db, { provider: "health-test" });
+    expect(point?.cliVersion).toBe("tool 1.2.3");
+  });
+
+  test("marks an old successful collector as stale", async () => {
+    expect(await providerHealth(db, "claude", 1)).toMatchObject({
+      status: "stale",
+      stale: true,
+      latestOk: true,
+    });
+  });
+
   test("a bounded history query returns the newest points in chronological order", async () => {
     for (const hour of [1, 2, 3]) {
       const observedAt = `2026-07-19T0${hour}:00:00Z`;
@@ -135,6 +191,7 @@ describe("repository", () => {
       remainingValue: null,
       usedValue: null,
       attributes: {},
+      cliVersion: null,
       observedAt: `2026-07-21T${String(index).padStart(2, "0")}:00:00Z`,
       remainingPercent: null,
       usedPercent: null,

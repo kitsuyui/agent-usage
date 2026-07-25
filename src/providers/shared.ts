@@ -4,4 +4,5 @@ import type { TuiCaptureConfig } from "./types.ts";
 export const DEFAULT_INTERSTITIALS: NonNullable<TuiCaptureConfig["interstitials"]> = [
   { pattern: /Update now/, sendKeys: "2" },
   { pattern: /Do you trust the files/, sendKeys: "1" },
+  { pattern: /Claude in Chrome extension detected/, sendKeys: "2" },
 ];
