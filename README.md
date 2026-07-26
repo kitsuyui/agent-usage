@@ -54,8 +54,10 @@ bun run sample -- --provider claude
 bun run src/cli/index.ts mcp
 ```
 
-The dashboard is served at `http://localhost:7979/` by default (see
-`HTTP_PORT` / `SAMPLE_INTERVAL_SECONDS` in `.env.example`).
+The dashboard is served at `http://127.0.0.1:7979/` by default. `HTTP_HOST`
+defaults to `127.0.0.1`, so the API is not exposed to remote hosts
+accidentally. See `HTTP_HOST`, `HTTP_PORT`, and `SAMPLE_INTERVAL_SECONDS` in
+`.env.example`.
 
 `bun run dev` shells out to the real `claude`/`codex`/`agy`/`copilot` CLIs on
 your machine (via tmux) — only run it where you actually want that.
@@ -101,7 +103,9 @@ collector per provider, each only needing that one CLI's credentials.
 # server: owns the database, accepts pushes, serves the dashboard.
 # --no-sample makes it a pure server (no CLI/tmux use at all) for hosts
 # with none of the agent CLIs installed; omit it to also sample locally.
-INGEST_TOKEN=some-shared-secret bun run src/cli/index.ts daemon --no-sample
+HTTP_HOST=0.0.0.0 \
+INGEST_TOKEN=some-shared-secret \
+bun run src/cli/index.ts daemon --no-sample
 
 # collector: only samples codex, pushes to the server, no local database
 INGEST_SERVER_URL=http://server-host:7979 \
@@ -113,6 +117,11 @@ bun run src/cli/index.ts daemon --provider codex
 sides to require it, or leave it unset for an unauthenticated ingest endpoint
 (fine on a trusted network; put a real auth layer in front otherwise, which
 neither the server nor its collectors need to know about).
+
+Remote serving is a separate opt-in: set `HTTP_HOST=0.0.0.0` (or a specific
+interface address) only on a central server that must accept remote
+collectors. Authentication or a trusted network boundary is still required;
+changing the bind address does not add access control.
 
 ## How it works
 

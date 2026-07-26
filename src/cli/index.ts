@@ -5,6 +5,7 @@ import { createRemoteSink } from "../daemon/remote-sink.ts";
 import { runSampleOnce } from "../daemon/sampler.ts";
 import { startMcpStdioServer } from "../mcp/server.ts";
 import { registerBuiltinProviders } from "../providers/index.ts";
+import { resolveHttpHost } from "../server/http.ts";
 import { disconnectPrismaClient, getPrismaClient } from "../storage/client.ts";
 import { createLocalSink, type SnapshotSink } from "../storage/sink.ts";
 
@@ -81,6 +82,7 @@ function resolveSink(): { sink: SnapshotSink; db: PrismaClient | undefined } {
 
 function resolveHttpOptions(db: PrismaClient): {
   db: PrismaClient;
+  host: string;
   port: number;
   ingestToken?: string;
   staleAfterSeconds?: number;
@@ -88,6 +90,7 @@ function resolveHttpOptions(db: PrismaClient): {
   const intervalSeconds = Number(process.env.SAMPLE_INTERVAL_SECONDS ?? 900);
   return {
     db,
+    host: resolveHttpHost(process.env.HTTP_HOST),
     port: Number(process.env.HTTP_PORT ?? DEFAULT_HTTP_PORT),
     staleAfterSeconds: intervalSeconds * 2 + 60,
     ...(process.env.INGEST_TOKEN ? { ingestToken: process.env.INGEST_TOKEN } : {}),
@@ -112,6 +115,7 @@ function printUsage(): void {
       "",
       "deployment modes (env vars):",
       "  (none)                    all-in-one: local database + HTTP API/dashboard + sampler",
+      "  HTTP_HOST=<host>          HTTP bind host (default: 127.0.0.1; use 0.0.0.0 explicitly for remote access)",
       "  INGEST_SERVER_URL=<url>   standalone collector: push to <url> instead of a local database",
       "  INGEST_TOKEN=<token>      shared-secret bearer token (set on both the server and its collectors)",
     ].join("\n"),

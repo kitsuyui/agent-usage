@@ -15,8 +15,14 @@ import {
 } from "../storage/repository.ts";
 
 const PUBLIC_DIR = normalize(join(import.meta.dir, "..", "..", "frontend"));
+export const DEFAULT_HTTP_HOST = "127.0.0.1";
 
 export interface HttpServerOptions {
+  /**
+   * Interface or hostname to bind. Defaults to loopback; remote access must
+   * opt in explicitly, for example with `0.0.0.0`.
+   */
+  host?: string;
   port: number;
   db: PrismaClient;
   /**
@@ -33,6 +39,7 @@ export interface HttpServerOptions {
 export function createHttpServer(options: HttpServerOptions) {
   const { db, port, ingestToken, staleAfterSeconds } = options;
   return Bun.serve({
+    hostname: resolveHttpHost(options.host),
     port,
     async fetch(request) {
       const url = new URL(request.url);
@@ -61,6 +68,10 @@ export function createHttpServer(options: HttpServerOptions) {
       }
     },
   });
+}
+
+export function resolveHttpHost(value: string | undefined): string {
+  return value?.trim() || DEFAULT_HTTP_HOST;
 }
 
 async function ingestSample(db: PrismaClient, request: Request, ingestToken: string | undefined): Promise<Response> {
