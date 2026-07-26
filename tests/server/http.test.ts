@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PrismaClient } from "@prisma/client";
 import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
-import { createHttpServer } from "../../src/server/http.ts";
+import { createHttpServer, resolveHttpHost } from "../../src/server/http.ts";
 import { emptySnapshot, snapshotFromWindows } from "../../src/domain/types.ts";
 import { usedWindow } from "../../src/domain/window-builder.ts";
 import { recordSnapshot } from "../../src/storage/repository.ts";
@@ -58,6 +58,13 @@ afterAll(async () => {
 });
 
 describe("HTTP API", () => {
+  test("binds to loopback by default and requires an explicit remote host", () => {
+    expect(server.hostname).toBe("127.0.0.1");
+    expect(resolveHttpHost(undefined)).toBe("127.0.0.1");
+    expect(resolveHttpHost("  ")).toBe("127.0.0.1");
+    expect(resolveHttpHost("0.0.0.0")).toBe("0.0.0.0");
+  });
+
   test("GET /health", async () => {
     const response = await fetch(`${baseUrl}/health`);
     expect(response.status).toBe(200);
