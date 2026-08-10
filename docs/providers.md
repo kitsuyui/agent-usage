@@ -1,8 +1,8 @@
 # Adding a provider
 
 A provider is a `UsageProvider` (`src/providers/types.ts`): an id, a display
-name, a non-interactive `versionCommand`, a TUI capture config, and a `parse`
-function. Nothing outside
+name, a non-interactive `versionCommand`, either a machine-readable `capture`
+function or a TUI capture config, and a `parse` function. Nothing outside
 `src/providers/` needs to change — storage, HTTP, MCP, and the dashboard all
 work against `UsageSnapshot`/`UsageWindow`, not provider-specific types.
 
@@ -44,7 +44,13 @@ If the provider uses a window label not already in
 `weekly`/`week`, `monthly`/`month`), call `registerWindowKind("your-label",
 seconds)` — e.g. in the provider's `index.ts`, before it's registered.
 
-## 3. Configure the TUI capture
+## 3. Configure capture
+
+Prefer a machine-readable `capture` function when the CLI exposes one. Codex,
+for example, uses app-server's `account/rateLimits/read`; it reads the current
+account limits without starting or persisting a conversation thread.
+
+Otherwise configure the TUI capture in the provider's `index.ts`:
 
 In the provider's `index.ts`, fill in a `TuiCaptureConfig`
 (`src/providers/types.ts`):
@@ -62,11 +68,9 @@ In the provider's `index.ts`, fill in a `TuiCaptureConfig`
   `src/providers/shared.ts` already covers the update-banner and
   trust-this-folder prompts seen across multiple CLIs.
 
-If the provider has a real non-interactive, machine-readable usage endpoint
-(as GitHub Copilot does via `gh api .../premium_request/usage`), skip the TUI
-entirely: give it a `capture`-free path by writing a custom collector instead
-of going through `src/capture/tmux.ts` — prefer that whenever it's available,
-since it's strictly cheaper and more reliable than screen-scraping.
+Do not fall back from a machine-readable capture to the TUI automatically.
+Failure should be recorded as collector health rather than risking an
+interactive prompt being mistaken for user input.
 
 ## 4. Register it
 

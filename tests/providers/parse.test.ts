@@ -53,6 +53,44 @@ describe("parseClaudeUsage", () => {
 });
 
 describe("parseCodexUsage", () => {
+  test("parses machine-readable app-server rate limits", () => {
+    const raw = JSON.stringify({
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          limitName: null,
+          planType: "pro",
+          primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1786320000 },
+          secondary: { usedPercent: 21, windowDurationMins: 10080, resetsAt: 1786834843 },
+        },
+        codex_bengalfox: {
+          limitId: "codex_bengalfox",
+          limitName: "GPT-5.3-Codex-Spark",
+          primary: { usedPercent: 6, windowDurationMins: 10080, resetsAt: 1786894779 },
+          secondary: null,
+        },
+      },
+      rateLimitResetCredits: { availableCount: 1 },
+    });
+    const snapshot = parseCodexUsage(raw, OBSERVED);
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.resetCredits).toBe(1);
+    expect(snapshot.windows).toHaveLength(3);
+    expect(snapshot.windows[0]).toMatchObject({
+      scope: "default",
+      window: "5h",
+      usedPercent: 12,
+      windowSeconds: 5 * 60 * 60,
+      resetsAt: "2026-08-10T00:00:00.000Z",
+      attributes: { limitId: "codex", plan: "pro" },
+    });
+    expect(snapshot.windows[2]).toMatchObject({
+      scope: "GPT-5.3-Codex-Spark",
+      window: "Weekly",
+      usedPercent: 6,
+    });
+  });
+
   test("extracts a scoped weekly window", () => {
     const raw = "GPT models limit:\nWeekly limit: [####] 58% left (resets 13:21 on 20 Jul)";
     const snapshot = parseCodexUsage(raw, OBSERVED);

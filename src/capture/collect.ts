@@ -9,7 +9,9 @@ export async function collectSnapshot(provider: UsageProvider): Promise<UsageSna
   const cliVersion = await captureCliVersion(provider);
   let raw = "";
   try {
-    raw = await captureTui(provider.id, provider.tui);
+    raw = "capture" in provider
+      ? await provider.capture()
+      : await captureTui(provider.id, provider.tui);
     let snapshot = provider.parse(raw, observedAt);
     if (!snapshot.ok) {
       const failure = classifyCaptureFailure(raw);
