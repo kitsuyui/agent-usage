@@ -11,11 +11,11 @@ src/
     window-builder.ts     builds a UsageWindow, wiring resetsAt/windowSeconds
     snapshot-schema.ts    zod validation for a snapshot arriving over the wire
 
-  providers/    one UsageProvider per agent CLI (id, TUI config, parser)
+  providers/    one UsageProvider per agent CLI (capture source + parser)
     registry.ts        pluggable id -> UsageProvider map
     claude/ codex/ antigravity/
       parse.ts          raw captured text -> UsageSnapshot (pure, unit-tested)
-      index.ts           UsageProvider wiring (TUI capture config + parse)
+      index.ts           UsageProvider wiring (structured or TUI capture + parse)
 
   capture/      turns a UsageProvider into an actual observation
     tmux.ts             drives the CLI's TUI inside a disposable tmux session
@@ -64,15 +64,18 @@ This split exists to let a provider's collector run somewhere with narrower
 access than the server — e.g. a container that only has one CLI's
 credentials mounted, rather than all of them.
 
-## Why screen-scrape a TUI instead of calling an API
+## Structured capture before TUI screen-scraping
 
-As of writing, none of the supported CLIs expose rate-limit/usage data via a
-documented, non-interactive flag — only their interactive `/usage` or
-`/status` screen shows it. So capture works the way a human would: launch the
-CLI headless in tmux, wait for it to be ready, send the usage command, wait
-for the screen to render, capture the pane text, tear the session down. See
-`src/capture/tmux.ts` for the exact sequence and `src/providers/*/parse.ts`
-for the per-provider regex parsing of that captured text.
+Codex uses app-server's `account/rateLimits/read`, which returns structured
+account limits without creating a conversation. This avoids TUI timing races
+and persistent session artifacts. It deliberately does not fall back to the
+interactive TUI: a failed sample is safer and more observable than accidental
+user input.
+
+For CLIs that expose usage only through `/usage`, capture works the way a
+human would: launch the CLI headless in tmux, wait for it to be ready, send
+the usage command, capture the pane text, and tear the session down. See
+`src/capture/tmux.ts` for that sequence.
 
 Each tmux session is disposable (kill stray session, launch fresh, capture,
 kill again) rather than kept alive across polls. That trades a bit of

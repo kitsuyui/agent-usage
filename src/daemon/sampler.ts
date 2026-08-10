@@ -8,9 +8,8 @@ import type { SnapshotSink } from "../storage/sink.ts";
  * each to `sink` — a local database write or a push to a remote server,
  * depending on how the caller was configured.
  *
- * Providers are sampled sequentially — each spawns an interactive TUI
- * session, and running several at once buys little while adding contention
- * risk for no real benefit at the sampling intervals this is meant for.
+ * Providers are sampled sequentially. Running several CLI captures at once
+ * buys little while adding contention risk at these sampling intervals.
  */
 export async function runSampleOnce(sink: SnapshotSink, providerId?: string): Promise<UsageSnapshot[]> {
   const providers = providerId ? [requireProvider(providerId)] : listProviders();

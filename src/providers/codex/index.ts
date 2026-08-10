@@ -1,18 +1,12 @@
 import type { UsageProvider } from "../types.ts";
-import { DEFAULT_INTERSTITIALS } from "../shared.ts";
+import { captureCodexRateLimits } from "./capture.ts";
 import { parseCodexUsage } from "./parse.ts";
 
 export const codexProvider: UsageProvider = {
   id: "codex",
   displayName: "Codex CLI",
   versionCommand: ["codex", "--version"],
-  tui: {
-    command: "codex",
-    readyPattern: /›\s/,
-    slashCommand: "/status",
-    expectedPattern: /% left/,
-    interstitials: DEFAULT_INTERSTITIALS,
-  },
+  capture: captureCodexRateLimits,
   parse: parseCodexUsage,
 };
 

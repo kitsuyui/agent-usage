@@ -14,13 +14,16 @@ export interface TuiCaptureConfig {
   interstitials?: { pattern: RegExp; sendKeys: string }[];
 }
 
+type CaptureSource =
+  | { /** Machine-readable capture that does not start an interactive session. */ capture: () => Promise<string>; tui?: never }
+  | { /** Interactive fallback for CLIs that expose usage only in their TUI. */ tui: TuiCaptureConfig; capture?: never };
+
 /** A pluggable source of rate-limit/usage data for one agent CLI. */
-export interface UsageProvider {
+export type UsageProvider = CaptureSource & {
   id: string;
   displayName: string;
   /** Argument vector that prints the CLI version without starting its TUI. */
   versionCommand: string[];
-  tui: TuiCaptureConfig;
-  /** Turns one captured TUI screen into a provider-neutral snapshot. */
+  /** Turns captured provider output into a provider-neutral snapshot. */
   parse(raw: string, observedAt: string): UsageSnapshot;
-}
+};

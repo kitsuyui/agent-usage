@@ -12,8 +12,8 @@ let registered = false;
 /**
  * Registers the built-in providers (claude, codex, antigravity, copilot).
  *
- * A new agent CLI is added by writing a `UsageProvider` (TUI capture config +
- * a `parse` function) and calling `registerProvider` — no changes needed
+ * A new agent CLI is added by writing a `UsageProvider` (capture source + a
+ * `parse` function) and calling `registerProvider` — no changes needed
  * anywhere else in the collector, storage, HTTP, or MCP layers.
  */
 export function registerBuiltinProviders(): void {

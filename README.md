@@ -7,11 +7,10 @@ dashboard.
 
 ## Why
 
-None of these CLIs currently expose their quota through a machine-readable
-flag — the only place the numbers show up is an interactive `/usage` or
-`/status` screen. This project drives that screen inside a disposable `tmux`
-session, parses it, and records it, so you get a queryable history instead of
-a number you have to read off a TUI by hand.
+Codex exposes account limits through its machine-readable app-server protocol,
+so that provider reads them without starting a conversation. Providers that
+only expose the numbers in an interactive `/usage` screen are driven inside a
+disposable `tmux` session. Both paths produce the same queryable history.
 
 One exception: Copilot's `/usage` screen shows a percentage but never a reset
 time. GitHub's docs say the included AI-credit allowance always resets at
@@ -60,7 +59,7 @@ accidentally. See `HTTP_HOST`, `HTTP_PORT`, and `SAMPLE_INTERVAL_SECONDS` in
 `.env.example`.
 
 `bun run dev` shells out to the real `claude`/`codex`/`agy`/`copilot` CLIs on
-your machine (via tmux) — only run it where you actually want that.
+your machine. Codex uses app-server; TUI-only providers use tmux.
 
 ## History queries
 
@@ -125,9 +124,8 @@ changing the bind address does not add access control.
 
 ## How it works
 
-1. **Capture** (`src/capture/tmux.ts`): launches a provider's CLI in a
-   disposable tmux session, sends its usage slash-command, and captures the
-   rendered pane text once it settles.
+1. **Capture**: uses a provider's machine-readable capture when available;
+   otherwise `src/capture/tmux.ts` drives its usage screen in disposable tmux.
 2. **Parse** (`src/providers/*/parse.ts`): a small regex-based parser per
    provider turns that captured text into a provider-neutral
    `UsageSnapshot` (see `src/domain/types.ts`).
