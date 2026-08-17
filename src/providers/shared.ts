@@ -3,6 +3,9 @@ import type { TuiCaptureConfig } from "./types.ts";
 /** Interstitial prompts seen across multiple agent CLIs on first launch. */
 export const DEFAULT_INTERSTITIALS: NonNullable<TuiCaptureConfig["interstitials"]> = [
   { pattern: /Update now/, sendKeys: "2" },
-  { pattern: /Do you trust the files/, sendKeys: "1" },
+  {
+    pattern: /Do you trust the files|Quick safety check: Is this a project/i,
+    sendKeys: "1",
+  },
   { pattern: /Claude in Chrome extension detected/, sendKeys: "2" },
 ];
