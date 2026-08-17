@@ -74,7 +74,11 @@ user input.
 
 For CLIs that expose usage only through `/usage`, capture works the way a
 human would: launch the CLI headless in tmux, wait for it to be ready, send
-the usage command, capture the pane text, and tear the session down. See
+the usage command, capture the pane text, and tear the session down. The
+collector uses a private tmux socket and ignores user tmux configuration. It
+must not attach provider panes to a pre-existing tmux server because that
+server keeps the environment and launch context from when it was created,
+which can make a provider CLI observe stale credentials. See
 `src/capture/tmux.ts` for that sequence.
 
 Each tmux session is disposable (kill stray session, launch fresh, capture,
