@@ -83,3 +83,22 @@ captured fixture text (copy real output once, then iterate against the
 fixture). Only run the actual `tmux` capture path once the parser is solid,
 since every real run launches an authenticated session against your own
 account.
+
+## Failure diagnostics and authentication context
+
+A captured TUI pane is sensitive diagnostic input. It can include account
+identity, organization names, workspace paths, prompts, or conversation text,
+so collector failures must log only a stable error code and a normalized
+message. Never write the raw pane to logs. Fixtures derived from real captures
+must be sanitized before they are committed.
+
+Classify only what the captured output proves. For example,
+`usage_windows_unavailable` means that the provider returned usage statistics
+without the rate-limit windows the parser needs. It does not claim why the
+provider chose that screen or whether a particular credential is wrong.
+
+Authentication is a deployment prerequisite. Validate it from the same
+execution context as the collector: an interactive shell and a background
+service can see different environment variables, credential stores, or login
+state. Keep those host-specific authentication checks outside provider parsing
+so an environment problem remains distinguishable from a collector defect.
