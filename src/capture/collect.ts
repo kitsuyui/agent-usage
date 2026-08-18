@@ -16,12 +16,15 @@ export async function collectSnapshot(provider: UsageProvider): Promise<UsageSna
     if (!snapshot.ok) {
       const failure = classifyCaptureFailure(raw);
       snapshot = { ...snapshot, error: failure.message, errorCode: failure.code };
+      logFailure(provider.id, failure);
     }
     if (cliVersion) snapshot = { ...snapshot, cliVersion };
-    if (!snapshot.ok) logFailure(provider.id, raw);
     return snapshot;
   } catch (error) {
-    logFailure(provider.id, raw);
+    logFailure(provider.id, {
+      code: "capture_failed",
+      message: "provider capture failed before producing usable output",
+    });
     const snapshot = emptySnapshot(
       provider.id,
       observedAt,
@@ -65,15 +68,23 @@ export function classifyCaptureFailure(raw: string): { code: string; message: st
   if (/Loading usage data/i.test(raw)) {
     return { code: "usage_data_unavailable", message: "provider usage data did not finish loading" };
   }
+  if (/API Usage Billing/i.test(raw)) {
+    return {
+      code: "usage_windows_unavailable",
+      message: "provider returned usage statistics without rate-limit windows",
+    };
+  }
   if (raw.trim() === "") {
     return { code: "capture_failed", message: "provider capture returned no output" };
   }
   return { code: "parse_failed", message: "provider output contained no recognized usage windows" };
 }
 
-// Diagnostic-only: the captured pane is UI chrome (window labels, percentages,
-// prompts), not a secret, and this is exactly what you need to see to tell a
-// stuck trust/update prompt apart from a genuinely unrecognized screen.
-function logFailure(providerId: string, raw: string): void {
-  console.error(`[${providerId}] capture produced no usable output; raw pane follows:\n${raw || "(empty)"}`);
+// Captured panes may include account identity, workspace paths, prompts, or
+// conversation text. Log only the normalized product-level diagnosis.
+function logFailure(
+  providerId: string,
+  failure: { code: string; message: string },
+): void {
+  console.error(`[${providerId}] capture failed (${failure.code}): ${failure.message}`);
 }

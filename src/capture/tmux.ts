@@ -1,16 +1,17 @@
 import type { TuiCaptureConfig } from "../providers/types.ts";
 
 /**
- * Drives a provider's interactive TUI inside a disposable tmux session and
- * returns the final captured pane text.
+ * Drives a provider's interactive TUI inside an isolated, disposable tmux
+ * session and returns the final captured pane text.
  *
  * None of `claude`, `codex`, or `agy` expose usage/quota through a
  * non-interactive flag today, so this screen-scrapes the same way a human
- * would: launch the CLI headless in tmux, wait for it to be ready, send the
- * usage slash-command, wait for the screen to render, capture the pane, and
- * tear the session down. One session per call — kept disposable (rather than
- * left running) so a stuck pane from one poll can never wedge the next one;
- * see docs/architecture.md for the tradeoff against a kept-alive session.
+ * would: launch the CLI headless in a private tmux server, wait for it to be
+ * ready, send the usage slash-command, wait for the screen to render, capture
+ * the pane, and tear the session down. One session per call — kept disposable
+ * (rather than left running) so a stuck pane from one poll can never wedge the
+ * next one; see docs/architecture.md for the tradeoff against a kept-alive
+ * session.
  */
 export interface TmuxCaptureOptions {
   sessionPrefix?: string;
@@ -22,6 +23,7 @@ export interface TmuxCaptureOptions {
 const DEFAULT_POLL_ATTEMPTS = 30;
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_EXPECTED_ATTEMPTS = 15;
+const TMUX_SOCKET_NAME = `agent-usage-${process.pid}`;
 
 export async function captureTui(
   providerId: string,
@@ -96,12 +98,14 @@ async function paneIsDead(session: string): Promise<boolean> {
 }
 
 async function tmux(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  // Nested tmux sessions get confused if the parent's TMUX env var leaks in
-  // when this daemon is itself run inside a long-lived tmux/screen session.
+  // Never reuse the user's tmux server. A tmux server retains the environment
+  // and launch context that created it, so attaching collector panes to an
+  // older server can make provider CLIs observe stale credentials even when
+  // the daemon itself has the correct environment.
   const env = { ...process.env };
   delete env.TMUX;
   try {
-    const proc = Bun.spawn(["tmux", ...args], { stdout: "pipe", stderr: "pipe", env });
+    const proc = Bun.spawn(buildTmuxCommand(args), { stdout: "pipe", stderr: "pipe", env });
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -111,6 +115,13 @@ async function tmux(args: string[]): Promise<{ stdout: string; stderr: string; e
   } catch {
     return { stdout: "", stderr: "tmux binary not found or not executable", exitCode: 1 };
   }
+}
+
+export function buildTmuxCommand(
+  args: string[],
+  socketName = TMUX_SOCKET_NAME,
+): string[] {
+  return ["tmux", "-L", socketName, "-f", "/dev/null", ...args];
 }
 
 function sleep(ms: number): Promise<void> {
