@@ -119,6 +119,33 @@ describe("HTTP API", () => {
     expect(body.map((point) => point.observedAt)).toEqual(["2026-07-18T09:00:00Z"]);
   });
 
+  test("GET /api/usage/chart groups metadata and returns compact point tuples", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/usage/chart?provider=claude&until=2026-07-18T10:00:00Z&range=2h&maxPoints=10`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      provider: string;
+      window: string;
+      scale: string;
+      points: [number, number][];
+    }[];
+    expect(body).toEqual([
+      expect.objectContaining({
+        provider: "claude",
+        window: "session",
+        scale: "remaining-percent",
+        points: [[Date.parse("2026-07-18T09:00:00Z"), 80]],
+      }),
+    ]);
+  });
+
+  test("GET /api/usage/chart requires a provider", async () => {
+    const response = await fetch(`${baseUrl}/api/usage/chart?range=2h&maxPoints=10`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "provider is required" });
+  });
+
   test("GET /api/usage/history rejects conflicting and malformed bounds", async () => {
     const conflict = await fetch(
       `${baseUrl}/api/usage/history?since=2026-07-18T08:00:00Z&range=10h`,

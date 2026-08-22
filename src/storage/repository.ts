@@ -154,6 +154,17 @@ export interface HistoryPoint {
   resetsAt: string | null;
 }
 
+export interface ChartSeries {
+  provider: string;
+  scope: string | null;
+  window: string;
+  metric: string;
+  unit: string | null;
+  attributes: Record<string, string>;
+  scale: "remaining-percent" | "value";
+  points: [timestampMs: number, value: number][];
+}
+
 /** A flattened, chart-ready time series of window observations. */
 export async function queryHistory(db: PrismaClient, query: HistoryQuery = {}): Promise<HistoryPoint[]> {
   const rows = await db.window.findMany({
@@ -279,6 +290,34 @@ export function downsampleHistory(points: HistoryPoint[], maxPoints: number): Hi
     .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
 }
 
+/** Groups chart-ready history without repeating series metadata for every point. */
+export function chartSeriesFromHistory(points: HistoryPoint[]): ChartSeries[] {
+  const grouped = new Map<string, ChartSeries>();
+  for (const point of points) {
+    const value = measurementValue(point);
+    if (value === null) continue;
+    const existing = grouped.get(point.seriesId);
+    if (existing) {
+      existing.points.push([new Date(point.observedAt).getTime(), value]);
+      continue;
+    }
+    grouped.set(point.seriesId, {
+      provider: point.provider,
+      scope: point.scope,
+      window: point.window,
+      metric: point.metric,
+      unit: point.unit,
+      attributes: point.attributes,
+      scale:
+        point.remainingPercent !== null || point.usedPercent !== null
+          ? "remaining-percent"
+          : "value",
+      points: [[new Date(point.observedAt).getTime(), value]],
+    });
+  }
+  return [...grouped.values()];
+}
+
 function downsampleSeries(points: HistoryPoint[], maxPoints: number): HistoryPoint[] {
   if (points.length <= maxPoints) return points;
   const first = points[0]!;
@@ -305,12 +344,17 @@ function downsampleSeries(points: HistoryPoint[], maxPoints: number): HistoryPoi
 }
 
 function numericValue(point: HistoryPoint): number {
+  return measurementValue(point) ?? 0;
+}
+
+function measurementValue(point: HistoryPoint): number | null {
   if (point.remainingPercent !== null) return point.remainingPercent;
   if (point.usedPercent !== null) return 100 - point.usedPercent;
   if (point.value !== null) return point.value;
   if (point.remainingValue !== null) return point.remainingValue;
+  if (point.limitValue !== null && point.usedValue !== null) return point.limitValue - point.usedValue;
   if (point.usedValue !== null) return point.usedValue;
-  return point.limitValue ?? 0;
+  return point.limitValue;
 }
 
 function toHistoryPoint(row: WindowWithSample): HistoryPoint {
