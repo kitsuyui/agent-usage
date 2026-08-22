@@ -29,7 +29,7 @@ provider computes `resetsAt` directly instead of parsing it — see
 - Resolves each provider's raw "resets in..." text into an absolute
   timestamp, so you can ask "when does this actually reset" instead of doing
   the math yourself.
-- HTTP API (`/api/providers`, `/api/usage/latest`, `/api/usage/history`,
+- HTTP API (`/api/providers`, `/api/usage/latest`, `/api/usage/history`, `/api/usage/chart`,
   `/api/usage/next-resets`) and an MCP server exposing the same data as tools,
   so both scripts and agents can read it.
 - A dependency-free static dashboard (plain HTML/CSS/TS, hand-rolled SVG
@@ -80,6 +80,12 @@ the database grows without making long-term retention inaccessible. The MCP
 Each history point also includes `cliVersion`, so a behavior change can be
 correlated with the exact CLI release that generated the observation.
 `cliVersion` is `null` when the CLI cannot report its version.
+
+The dashboard uses the provider-scoped `/api/usage/chart` endpoint. It accepts
+the same history bounds and downsampling parameters, but groups metadata once
+per logical series and returns each observation as a compact
+`[timestampMilliseconds, value]` tuple. The detailed `/api/usage/history`
+response remains available for diagnostics and MCP consumers.
 
 `GET /api/providers` reports current collector health: `status`
 (`healthy`, `failing`, `stale`, or `no_data`), the last attempt and success

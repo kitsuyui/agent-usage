@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PrismaClient } from "@prisma/client";
 import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import {
+  chartSeriesFromHistory,
   downsampleHistory,
   distinctProviders,
   latestSnapshot,
@@ -204,6 +205,67 @@ describe("repository", () => {
     expect(sampled[0]?.observedAt).toBe(points[0]?.observedAt);
     expect(sampled.at(-1)?.observedAt).toBe(points.at(-1)?.observedAt);
     expect(sampled.some((point) => point.value === 1_000)).toBe(true);
+  });
+
+  test("groups chart history without repeating metadata for every point", () => {
+    const points = [
+      {
+        provider: "test",
+        seriesId: "series-a",
+        scope: "default",
+        window: "daily",
+        windowSeconds: 86_400,
+        metric: "quota",
+        unit: "percent",
+        value: null,
+        limitValue: null,
+        remainingValue: null,
+        usedValue: null,
+        attributes: { plan: "pro" },
+        cliVersion: "tool 1.0.0",
+        observedAt: "2026-07-21T00:00:00Z",
+        remainingPercent: null,
+        usedPercent: 25,
+        resetsRaw: "1h",
+        resetsAt: "2026-07-21T01:00:00Z",
+      },
+      {
+        provider: "test",
+        seriesId: "series-a",
+        scope: "default",
+        window: "daily",
+        windowSeconds: 86_400,
+        metric: "quota",
+        unit: "percent",
+        value: null,
+        limitValue: null,
+        remainingValue: null,
+        usedValue: null,
+        attributes: { plan: "pro" },
+        cliVersion: "tool 1.0.1",
+        observedAt: "2026-07-21T01:00:00Z",
+        remainingPercent: 70,
+        usedPercent: null,
+        resetsRaw: "2h",
+        resetsAt: "2026-07-21T03:00:00Z",
+      },
+    ];
+
+    expect(chartSeriesFromHistory(points)).toEqual([
+      {
+        provider: "test",
+        scope: "default",
+        window: "daily",
+        metric: "quota",
+        unit: "percent",
+        attributes: { plan: "pro" },
+        scale: "remaining-percent",
+        points: [
+          [Date.parse("2026-07-21T00:00:00Z"), 75],
+          [Date.parse("2026-07-21T01:00:00Z"), 70],
+        ],
+      },
+    ]);
   });
 
   test("an unknown provider has no latest snapshot", async () => {

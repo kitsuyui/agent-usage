@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { toUsageSnapshot, usageSnapshotSchema } from "../domain/snapshot-schema.ts";
 import { listProviders } from "../providers/index.ts";
 import {
+  chartSeriesFromHistory,
   distinctProviders,
   downsampleHistory,
   type HistoryQuery,
@@ -55,6 +56,13 @@ export function createHttpServer(options: HttpServerOptions) {
           const parsed = parseHistoryQuery(url.searchParams);
           const points = await queryHistory(db, parsed.query);
           return json(parsed.maxPoints ? downsampleHistory(points, parsed.maxPoints) : points);
+        }
+        if (url.pathname === "/api/usage/chart") {
+          const parsed = parseHistoryQuery(url.searchParams);
+          if (!parsed.query.provider) throw new BadRequestError("provider is required");
+          const points = await queryHistory(db, parsed.query);
+          const sampled = parsed.maxPoints ? downsampleHistory(points, parsed.maxPoints) : points;
+          return json(chartSeriesFromHistory(sampled));
         }
         if (url.pathname === "/api/usage/next-resets") return json(await nextResets(db));
         if (url.pathname === "/api/usage/samples" && request.method === "POST") {

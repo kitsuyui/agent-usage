@@ -39,6 +39,17 @@ interface HistoryPoint {
 
 type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw">;
 
+interface ChartSeries {
+  provider: string;
+  scope: string | null;
+  window: string;
+  metric: string;
+  unit: string | null;
+  attributes: Record<string, string>;
+  scale: "remaining-percent" | "value";
+  points: [timestampMs: number, value: number][];
+}
+
 const PALETTE = ["#6ea8fe", "#7ee7a8", "#f2b56b", "#f28b82", "#c792ea", "#7fd4d4", "#e6a4c4", "#a3be8c"];
 const REFRESH_MS = 60_000;
 const MAX_POINTS_PER_SERIES = 480;
@@ -52,6 +63,7 @@ const HISTORY_RANGES = {
 type HistoryRange = keyof typeof HISTORY_RANGES;
 
 let selectedRange: HistoryRange = initialRange();
+let renderedRange: HistoryRange | null = null;
 
 async function main(): Promise<void> {
   const rangeSelect = document.getElementById("history-range");
@@ -85,7 +97,12 @@ async function refresh(): Promise<void> {
     renderResets(resetsEl, resets);
 
     const withData = providers.filter((provider) => provider.hasData);
-    const historyEntries = await Promise.all(
+    if (renderedRange !== selectedRange || chartsEl.children.length === 0) {
+      chartsEl.innerHTML = withData
+        .map((provider) => card(provider.displayName, '<p class="empty-state">Loading chart data…</p>'))
+        .join("");
+    }
+    const chartResults = await Promise.allSettled(
       withData.map(async (provider) => {
         const query = new URLSearchParams({
           provider: provider.id,
@@ -93,10 +110,24 @@ async function refresh(): Promise<void> {
           limit: String(HISTORY_LIMIT),
           maxPoints: String(MAX_POINTS_PER_SERIES),
         });
-        return [provider.id, await fetchJson<HistoryPoint[]>(`/api/usage/history?${query}`)] as const;
+        return [provider.id, await fetchJson<ChartSeries[]>(`/api/usage/chart?${query}`)] as const;
       }),
     );
-    renderCharts(chartsEl, providers, new Map(historyEntries), HISTORY_RANGES[selectedRange]);
+    const chartsByProvider = new Map<string, ChartSeries[]>();
+    const errorsByProvider = new Set<string>();
+    for (const result of chartResults) {
+      if (result.status === "fulfilled") {
+        const [providerId, series] = result.value;
+        chartsByProvider.set(providerId, series);
+      } else {
+        console.error(result.reason);
+      }
+    }
+    chartResults.forEach((result, index) => {
+      if (result.status === "rejected") errorsByProvider.add(withData[index]!.id);
+    });
+    renderCharts(chartsEl, providers, chartsByProvider, errorsByProvider, HISTORY_RANGES[selectedRange]);
+    renderedRange = selectedRange;
   } catch (error) {
     console.error(error);
   }
@@ -168,7 +199,8 @@ function renderResets(container: HTMLElement, resets: NextReset[]): void {
 function renderCharts(
   container: HTMLElement,
   providers: ProviderInfo[],
-  historyByProvider: Map<string, HistoryPoint[]>,
+  chartsByProvider: Map<string, ChartSeries[]>,
+  errorsByProvider: Set<string>,
   rangeLabel: string,
 ): void {
   const withData = providers.filter((provider) => provider.hasData);
@@ -178,10 +210,12 @@ function renderCharts(
   }
   container.innerHTML = withData
     .map((provider) => {
-      const points = historyByProvider.get(provider.id) ?? [];
-      const groups = groupByScale(points);
+      const series = chartsByProvider.get(provider.id) ?? [];
+      const groups = groupByScale(series);
       const body =
-        groups.size === 0
+        errorsByProvider.has(provider.id)
+          ? '<p class="empty-state">Chart data could not be loaded.</p>'
+          : groups.size === 0
           ? '<p class="empty-state">No chartable data in this range.</p>'
           : [...groups.entries()]
               .map(([scale, group]) => {
@@ -202,26 +236,26 @@ function card(title: string, body: string): string {
   return `<div class="card"><h2>${escapeHtml(title)}</h2>${body}</div>`;
 }
 
-function groupByScale(points: HistoryPoint[]): Map<string, HistoryPoint[]> {
-  const groups = new Map<string, HistoryPoint[]>();
-  for (const point of points) {
-    if (measurementValue(point) === null) continue;
-    const key = scaleKey(point);
+function groupByScale(series: ChartSeries[]): Map<string, ChartSeries[]> {
+  const groups = new Map<string, ChartSeries[]>();
+  for (const item of series) {
+    if (item.points.length === 0) continue;
+    const key = scaleKey(item);
     const group = groups.get(key);
-    if (group) group.push(point);
-    else groups.set(key, [point]);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
   }
   return groups;
 }
 
-function scaleKey(point: HistoryPoint): string {
-  if (percentRemainingOf(point) !== null) return "remaining-percent";
-  return JSON.stringify([point.metric ?? "quota", point.unit ?? "value"]);
+function scaleKey(series: ChartSeries): string {
+  if (series.scale === "remaining-percent") return "remaining-percent";
+  return JSON.stringify([series.metric, series.unit ?? "value"]);
 }
 
-function scaleLabel(point: HistoryPoint, scale: string): string {
+function scaleLabel(series: ChartSeries, scale: string): string {
   if (scale === "remaining-percent") return "Quota remaining (%)";
-  return `${point.metric ?? "Usage"} (${point.unit ?? "value"})`;
+  return `${series.metric} (${series.unit ?? "value"})`;
 }
 
 function percentRemainingOf(point: { remainingPercent: number | null; usedPercent: number | null }): number | null {
@@ -240,38 +274,24 @@ function measurementValue(point: HistoryPoint): number | null {
   return point.limitValue ?? null;
 }
 
-function seriesKey(point: HistoryPoint): string {
-  return (
-    point.seriesId ??
-    JSON.stringify([
-      point.provider,
-      point.scope ?? "",
-      point.window.toLowerCase(),
-      point.windowSeconds,
-      point.metric ?? "quota",
-      point.unit ?? "",
-      Object.entries(point.attributes ?? {}).sort(([left], [right]) => left.localeCompare(right)),
-    ])
-  );
-}
-
-function seriesLabel(point: HistoryPoint): string {
-  const parts = [scopeLabel(point), point.window];
-  const attributes = Object.entries(point.attributes ?? {})
+function seriesLabel(series: ChartSeries): string {
+  const parts = [scopeLabel(series), series.window];
+  const attributes = Object.entries(series.attributes)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${value}`);
   return [...parts, ...attributes].filter((part) => part !== "—").join(" · ");
 }
 
-function buildChartSvg(points: HistoryPoint[], scale: string): string {
-  if (points.length === 0) return "";
+function buildChartSvg(series: ChartSeries[], scale: string): string {
+  if (series.length === 0) return "";
   const width = 900;
   const height = 240;
   const padding = { top: 12, right: 12, bottom: 34, left: 52 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const values = points.map(measurementValue).filter((value): value is number => value !== null);
-  const times = points.map((point) => new Date(point.observedAt).getTime());
+  const points = series.flatMap((item) => item.points);
+  const values = points.map(([, value]) => value);
+  const times = points.map(([timestamp]) => timestamp);
   const minTime = Math.min(...times);
   const maxTime = Math.max(...times);
   const timeSpan = Math.max(1, maxTime - minTime);
@@ -293,22 +313,11 @@ function buildChartSvg(points: HistoryPoint[], scale: string): string {
     )
     .join("");
 
-  const series = new Map<string, HistoryPoint[]>();
-  for (const point of points) {
-    const key = seriesKey(point);
-    const list = series.get(key);
-    if (list) list.push(point);
-    else series.set(key, [point]);
-  }
-  const polylines = [...series.values()]
-    .map((list, index) => {
-      const sorted = [...list].sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+  const polylines = series
+    .map((item, index) => {
+      const sorted = [...item.points].sort(([left], [right]) => left - right);
       const path = sorted
-        .map((point) => {
-          const value = measurementValue(point);
-          return value === null ? "" : `${x(new Date(point.observedAt).getTime()).toFixed(1)},${y(value).toFixed(1)}`;
-        })
-        .filter(Boolean)
+        .map(([timestamp, value]) => `${x(timestamp).toFixed(1)},${y(value).toFixed(1)}`)
         .join(" ");
       return `<polyline points="${path}" fill="none" stroke="${PALETTE[index % PALETTE.length]}" stroke-width="2" stroke-linejoin="round" />`;
     })
@@ -318,10 +327,8 @@ function buildChartSvg(points: HistoryPoint[], scale: string): string {
   return `<svg class="usage-chart" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">${gridLines}${polylines}${timeLabels}</svg>`;
 }
 
-function buildLegend(points: HistoryPoint[]): string {
-  const representatives = new Map<string, HistoryPoint>();
-  for (const point of points) representatives.set(seriesKey(point), point);
-  return [...representatives.values()]
+function buildLegend(series: ChartSeries[]): string {
+  return series
     .map(
       (point, index) =>
         `<span><span class="swatch" style="background:${PALETTE[index % PALETTE.length]}"></span>${escapeHtml(seriesLabel(point))}</span>`,
