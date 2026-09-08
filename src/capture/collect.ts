@@ -34,16 +34,19 @@ export async function collectSnapshot(provider: UsageProvider): Promise<UsageSna
   }
 }
 
-const VERSION_TIMEOUT_MS = 5_000;
+export const VERSION_TIMEOUT_MS = 30_000;
 
-export async function captureCliVersion(provider: UsageProvider): Promise<string | undefined> {
+export async function captureCliVersion(
+  provider: UsageProvider,
+  options: { timeoutMs?: number } = {},
+): Promise<string | undefined> {
   try {
     const proc = Bun.spawn(provider.versionCommand, { stdout: "pipe", stderr: "pipe" });
     const output = Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
-    const timer = setTimeout(() => proc.kill(), VERSION_TIMEOUT_MS);
+    const timer = setTimeout(() => proc.kill(), options.timeoutMs ?? VERSION_TIMEOUT_MS);
     const exitCode = await proc.exited;
     clearTimeout(timer);
     const [stdout, stderr] = await output;

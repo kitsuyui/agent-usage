@@ -18,9 +18,18 @@ export interface TmuxCaptureOptions {
   pollAttempts?: number;
   pollIntervalMs?: number;
   expectedAttempts?: number;
+  /** Injectable for deterministic capture tests. */
+  runTmux?: TmuxRunner;
+  /** Injectable for deterministic capture tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
-const DEFAULT_POLL_ATTEMPTS = 30;
+export type TmuxResult = { stdout: string; stderr: string; exitCode: number };
+export type TmuxRunner = (args: string[]) => Promise<TmuxResult>;
+
+// A first cold launch can spend appreciable time loading extensions and
+// credentials. Keep that bounded, but allow it longer than the usage screen.
+const DEFAULT_POLL_ATTEMPTS = 60;
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_EXPECTED_ATTEMPTS = 15;
 const TMUX_SOCKET_NAME = `agent-usage-${process.pid}`;
@@ -34,70 +43,78 @@ export async function captureTui(
   const pollAttempts = options.pollAttempts ?? DEFAULT_POLL_ATTEMPTS;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const expectedAttempts = options.expectedAttempts ?? DEFAULT_EXPECTED_ATTEMPTS;
+  const runTmux = options.runTmux ?? tmux;
+  const wait = options.sleep ?? sleep;
 
-  await tmux(["kill-session", "-t", session]);
+  await runTmux(["kill-session", "-t", session]);
   // remain-on-exit (scoped to this session, not -g, so a shared host tmux
   // server is unaffected) keeps the pane around if the CLI dies, so its last
   // words are capturable instead of the whole session silently vanishing.
   // Chained into the same tmux call to minimize the launch/set race.
-  const launch = await tmux([
+  const launch = await runTmux([
     "new-session", "-d", "-s", session, "-x", "200", "-y", "50", config.command,
     ";", "set-option", "-t", session, "remain-on-exit", "on",
   ]);
   if (launch.exitCode !== 0) {
-    throw new Error(
-      `failed to launch tmux session for provider "${providerId}": ${launch.stderr.trim() || "(no stderr)"}`,
-    );
+    throw new Error(`provider "${providerId}" TUI failed to launch (exit code ${launch.exitCode})`);
   }
 
   try {
     let pane = "";
+    let ready = false;
     for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
-      await sleep(pollIntervalMs);
-      pane = await capturePane(session);
+      await wait(pollIntervalMs);
+      pane = await capturePane(session, runTmux);
       // The CLI exited before (or instead of) rendering its UI — return what
       // it left behind (startup errors etc.) rather than waiting out the
       // polls and interacting with a corpse.
-      if (await paneIsDead(session)) return pane;
+      if (await paneIsDead(session, runTmux)) return pane;
       const interstitial = config.interstitials?.find((entry) => entry.pattern.test(pane));
       if (interstitial) {
-        await tmux(["send-keys", "-t", session, interstitial.sendKeys, "Enter"]);
+        await runTmux(["send-keys", "-t", session, interstitial.sendKeys, "Enter"]);
         continue;
       }
-      if (config.readyPattern.test(pane)) break;
+      if (config.readyPattern.test(pane)) {
+        ready = true;
+        break;
+      }
     }
 
-    await tmux(["send-keys", "-t", session, config.slashCommand]);
-    await sleep(1000);
-    await tmux(["send-keys", "-t", session, "Enter"]);
+    if (!ready) {
+      throw new Error(`provider "${providerId}" TUI did not become ready before startup timeout`);
+    }
+
+    await runTmux(["send-keys", "-t", session, config.slashCommand]);
+    await wait(1000);
+    await runTmux(["send-keys", "-t", session, "Enter"]);
 
     for (let attempt = 0; attempt < expectedAttempts; attempt += 1) {
-      await sleep(pollIntervalMs);
-      pane = await capturePane(session);
-      if (await paneIsDead(session)) return pane;
+      await wait(pollIntervalMs);
+      pane = await capturePane(session, runTmux);
+      if (await paneIsDead(session, runTmux)) return pane;
       if (config.expectedPattern.test(pane)) break;
     }
     return pane;
   } finally {
-    await tmux(["send-keys", "-t", session, "C-c"]);
-    await sleep(500);
-    await tmux(["send-keys", "-t", session, "C-c"]);
-    await sleep(500);
-    await tmux(["kill-session", "-t", session]);
+    await runTmux(["send-keys", "-t", session, "C-c"]);
+    await wait(500);
+    await runTmux(["send-keys", "-t", session, "C-c"]);
+    await wait(500);
+    await runTmux(["kill-session", "-t", session]);
   }
 }
 
-async function capturePane(session: string): Promise<string> {
-  const result = await tmux(["capture-pane", "-t", session, "-p"]);
+async function capturePane(session: string, runTmux: TmuxRunner): Promise<string> {
+  const result = await runTmux(["capture-pane", "-t", session, "-p"]);
   return result.exitCode === 0 ? result.stdout : "";
 }
 
-async function paneIsDead(session: string): Promise<boolean> {
-  const result = await tmux(["list-panes", "-t", session, "-F", "#{pane_dead}"]);
+async function paneIsDead(session: string, runTmux: TmuxRunner): Promise<boolean> {
+  const result = await runTmux(["list-panes", "-t", session, "-F", "#{pane_dead}"]);
   return result.exitCode === 0 ? result.stdout.trim().startsWith("1") : true;
 }
 
-async function tmux(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function tmux(args: string[]): Promise<TmuxResult> {
   // Never reuse the user's tmux server. A tmux server retains the environment
   // and launch context that created it, so attaching collector panes to an
   // older server can make provider CLIs observe stale credentials even when

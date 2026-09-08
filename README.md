@@ -59,7 +59,10 @@ accidentally. See `HTTP_HOST`, `HTTP_PORT`, and `SAMPLE_INTERVAL_SECONDS` in
 `.env.example`.
 
 `bun run dev` shells out to the real `claude`/`codex`/`agy`/`copilot` CLIs on
-your machine. Codex uses app-server; TUI-only providers use tmux.
+your machine. Codex uses app-server; TUI-only providers use tmux. Captures are
+bounded: version detection allows up to 30 seconds, TUI startup up to two
+minutes, and a rendered usage screen up to 30 seconds. Codex allows 60 seconds
+for app-server initialization and 30 seconds for the usage request.
 
 ## History queries
 
