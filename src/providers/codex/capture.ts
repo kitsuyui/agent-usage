@@ -4,10 +4,16 @@ type JsonRpcMessage = {
   error?: { message?: string };
 };
 
-const RESPONSE_TIMEOUT_MS = 10_000;
+export const CODEX_STARTUP_TIMEOUT_MS = 60_000;
+export const CODEX_USAGE_TIMEOUT_MS = 30_000;
+
+export interface CodexCaptureTimeouts {
+  startupTimeoutMs?: number;
+  usageTimeoutMs?: number;
+}
 
 /** Reads Codex usage without starting or persisting a conversation thread. */
-export async function captureCodexRateLimits(): Promise<string> {
+export async function captureCodexRateLimits(timeouts: CodexCaptureTimeouts = {}): Promise<string> {
   const proc = Bun.spawn(["codex", "app-server"], {
     stdin: "pipe",
     stdout: "pipe",
@@ -19,7 +25,7 @@ export async function captureCodexRateLimits(): Promise<string> {
   let failure: unknown;
 
   try {
-    result = await withTimeout(exchangeRateLimits(proc.stdin, messages), RESPONSE_TIMEOUT_MS);
+    result = await exchangeRateLimits(proc.stdin, messages, timeouts);
   } catch (error) {
     failure = error;
   } finally {
@@ -29,17 +35,20 @@ export async function captureCodexRateLimits(): Promise<string> {
     await proc.exited;
   }
 
-  const stderr = (await stderrPromise).trim();
+  await stderrPromise;
   if (failure !== undefined) {
     const message = failure instanceof Error ? failure.message : String(failure);
-    throw new Error(stderr ? `${message}: ${stderr}` : message);
+    // app-server stderr can contain local paths or account context. The caller
+    // needs the phase-level failure, not the process's unbounded raw output.
+    throw new Error(message);
   }
   return JSON.stringify(result);
 }
 
-async function exchangeRateLimits(
+export async function exchangeRateLimits(
   stdin: { write(data: string): unknown },
   messages: AsyncGenerator<JsonRpcMessage>,
+  timeouts: CodexCaptureTimeouts = {},
 ): Promise<unknown> {
   writeMessage(stdin, {
     method: "initialize",
@@ -52,11 +61,19 @@ async function exchangeRateLimits(
       },
     },
   });
-  await responseResult(messages, 0);
+  await withTimeout(
+    responseResult(messages, 0),
+    timeouts.startupTimeoutMs ?? CODEX_STARTUP_TIMEOUT_MS,
+    "codex app-server initialization timed out",
+  );
 
   writeMessage(stdin, { method: "initialized", params: {} });
   writeMessage(stdin, { method: "account/rateLimits/read", id: 1 });
-  return responseResult(messages, 1);
+  return withTimeout(
+    responseResult(messages, 1),
+    timeouts.usageTimeoutMs ?? CODEX_USAGE_TIMEOUT_MS,
+    "codex app-server usage request timed out",
+  );
 }
 
 function writeMessage(stdin: { write(data: string): unknown }, message: unknown): void {
@@ -99,13 +116,13 @@ async function* readJsonMessages(stream: ReadableStream<Uint8Array>): AsyncGener
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("codex app-server response timed out")), timeoutMs);
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
       }),
     ]);
   } finally {
