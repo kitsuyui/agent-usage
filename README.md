@@ -35,6 +35,10 @@ provider computes `resetsAt` directly instead of parsing it — see
 - A dependency-free static dashboard (plain HTML/CSS/TS, hand-rolled SVG
   charts) served by the same HTTP server. It defaults to 14 days for trend
   visibility and can switch to a focused 10-hour view or longer ranges.
+- Charts label each series' next reported reset with a matching color and
+  number, its local date/time, and a countdown. Dashed markers place nearby
+  resets on the time axis; an arrow identifies later resets without squeezing
+  the usage history. Unknown or expired reset times remain explicit.
 - New providers are a config object + a parser function away — see
   [`docs/providers.md`](docs/providers.md).
 
@@ -89,6 +93,8 @@ the same history bounds and downsampling parameters, but groups metadata once
 per logical series and returns each observation as a compact
 `[timestampMilliseconds, value]` tuple. The detailed `/api/usage/history`
 response remains available for diagnostics and MCP consumers.
+Each chart series includes the same `seriesId` as history and next-reset
+responses, so clients can match current resets to the correct usage series.
 
 `GET /api/providers` reports current collector health: `status`
 (`healthy`, `failing`, `stale`, or `no_data`), the last attempt and success

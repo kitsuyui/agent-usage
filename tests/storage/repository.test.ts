@@ -253,6 +253,7 @@ describe("repository", () => {
 
     expect(chartSeriesFromHistory(points)).toEqual([
       {
+        seriesId: "series-a",
         provider: "test",
         scope: "default",
         window: "daily",
@@ -266,6 +267,45 @@ describe("repository", () => {
         ],
       },
     ]);
+  });
+
+  test("keeps distinct identities for chart series with the same window name", () => {
+    const shared = {
+      provider: "test",
+      scope: "default",
+      window: "weekly",
+      metric: "quota",
+      unit: "percent",
+      value: null,
+      limitValue: null,
+      remainingValue: null,
+      usedValue: null,
+      cliVersion: null,
+      remainingPercent: 80,
+      usedPercent: null,
+      resetsRaw: null,
+      resetsAt: null,
+    };
+    const series = chartSeriesFromHistory([
+      {
+        ...shared,
+        seriesId: "weekly-7-days",
+        windowSeconds: 7 * 24 * 60 * 60,
+        attributes: { tier: "standard" },
+        observedAt: "2026-07-21T00:00:00Z",
+      },
+      {
+        ...shared,
+        seriesId: "weekly-30-days",
+        windowSeconds: 30 * 24 * 60 * 60,
+        attributes: { tier: "premium" },
+        observedAt: "2026-07-21T00:00:00Z",
+      },
+    ]);
+
+    expect(series).toHaveLength(2);
+    expect(series.map((entry) => entry.seriesId)).toEqual(["weekly-7-days", "weekly-30-days"]);
+    expect(series.map((entry) => entry.attributes)).toEqual([{ tier: "standard" }, { tier: "premium" }]);
   });
 
   test("an unknown provider has no latest snapshot", async () => {
