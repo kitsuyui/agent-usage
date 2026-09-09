@@ -155,6 +155,7 @@ export interface HistoryPoint {
 }
 
 export interface ChartSeries {
+  seriesId: string;
   provider: string;
   scope: string | null;
   window: string;
@@ -302,6 +303,7 @@ export function chartSeriesFromHistory(points: HistoryPoint[]): ChartSeries[] {
       continue;
     }
     grouped.set(point.seriesId, {
+      seriesId: point.seriesId,
       provider: point.provider,
       scope: point.scope,
       window: point.window,

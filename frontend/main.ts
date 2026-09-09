@@ -1,6 +1,9 @@
 // Dependency-free dashboard: bounded history queries, per-unit charts, and a
 // next-resets table. The API downsamples each logical series before rendering.
 
+import { buildChartSvg, buildLegend, type ChartSeries } from "./chart.ts";
+import { escapeHtml, formatNumber, scopeLabel } from "./format.ts";
+
 interface ProviderInfo {
   id: string;
   displayName: string;
@@ -37,20 +40,8 @@ interface HistoryPoint {
   resetsAt: string | null;
 }
 
-type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw">;
+type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw" | "seriesId"> & { seriesId: string };
 
-interface ChartSeries {
-  provider: string;
-  scope: string | null;
-  window: string;
-  metric: string;
-  unit: string | null;
-  attributes: Record<string, string>;
-  scale: "remaining-percent" | "value";
-  points: [timestampMs: number, value: number][];
-}
-
-const PALETTE = ["#6ea8fe", "#7ee7a8", "#f2b56b", "#f28b82", "#c792ea", "#7fd4d4", "#e6a4c4", "#a3be8c"];
 const REFRESH_MS = 60_000;
 const MAX_POINTS_PER_SERIES = 480;
 const HISTORY_LIMIT = 100_000;
@@ -126,7 +117,7 @@ async function refresh(): Promise<void> {
     chartResults.forEach((result, index) => {
       if (result.status === "rejected") errorsByProvider.add(withData[index]!.id);
     });
-    renderCharts(chartsEl, providers, chartsByProvider, errorsByProvider, HISTORY_RANGES[selectedRange]);
+    renderCharts(chartsEl, providers, chartsByProvider, errorsByProvider, HISTORY_RANGES[selectedRange], resets);
     renderedRange = selectedRange;
   } catch (error) {
     console.error(error);
@@ -202,7 +193,9 @@ function renderCharts(
   chartsByProvider: Map<string, ChartSeries[]>,
   errorsByProvider: Set<string>,
   rangeLabel: string,
+  resets: NextReset[],
 ): void {
+  const now = Date.now();
   const withData = providers.filter((provider) => provider.hasData);
   if (withData.length === 0) {
     container.innerHTML = card("Usage history", '<p class="empty-state">No providers have recorded data yet.</p>');
@@ -219,11 +212,12 @@ function renderCharts(
           ? '<p class="empty-state">No chartable data in this range.</p>'
           : [...groups.entries()]
               .map(([scale, group]) => {
-                const svg = buildChartSvg(group, scale);
+                const svg = buildChartSvg(group, scale, resets, now);
                 return `<section class="chart-group">
                   <div class="chart-heading"><span>${escapeHtml(scaleLabel(group[0]!, scale))}</span><span>${escapeHtml(rangeLabel)}</span></div>
-                  ${svg}
-                  <div class="chart-legend">${buildLegend(group)}</div>
+                  <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group[0]!, scale))} history and reset times">${svg}</div>
+                  <p class="chart-hint">Dashed lines mark next resets. → means beyond the time axis.</p>
+                  <div class="chart-legend" role="list">${buildLegend(group, resets, now)}</div>
                 </section>`;
               })
               .join("");
@@ -274,72 +268,6 @@ function measurementValue(point: HistoryPoint): number | null {
   return point.limitValue ?? null;
 }
 
-function seriesLabel(series: ChartSeries): string {
-  const parts = [scopeLabel(series), series.window];
-  const attributes = Object.entries(series.attributes)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value}`);
-  return [...parts, ...attributes].filter((part) => part !== "—").join(" · ");
-}
-
-function buildChartSvg(series: ChartSeries[], scale: string): string {
-  if (series.length === 0) return "";
-  const width = 900;
-  const height = 240;
-  const padding = { top: 12, right: 12, bottom: 34, left: 52 };
-  const plotWidth = width - padding.left - padding.right;
-  const plotHeight = height - padding.top - padding.bottom;
-  const points = series.flatMap((item) => item.points);
-  const values = points.map(([, value]) => value);
-  const times = points.map(([timestamp]) => timestamp);
-  const minTime = Math.min(...times);
-  const maxTime = Math.max(...times);
-  const timeSpan = Math.max(1, maxTime - minTime);
-  const percentScale = scale === "remaining-percent";
-  const rawMin = percentScale ? 0 : Math.min(...values);
-  const rawMax = percentScale ? 100 : Math.max(...values);
-  const margin = percentScale ? 0 : Math.max(1, (rawMax - rawMin) * 0.08);
-  const minValue = percentScale ? 0 : Math.min(0, rawMin - margin);
-  const maxValue = percentScale ? 100 : rawMax + margin;
-  const valueSpan = Math.max(1, maxValue - minValue);
-  const x = (time: number): number => padding.left + ((time - minTime) / timeSpan) * plotWidth;
-  const y = (value: number): number => padding.top + (1 - (value - minValue) / valueSpan) * plotHeight;
-  const levels = Array.from({ length: 5 }, (_, index) => minValue + (valueSpan * index) / 4);
-  const gridLines = levels
-    .map(
-      (level) =>
-        `<line x1="${padding.left}" y1="${y(level)}" x2="${width - padding.right}" y2="${y(level)}" stroke="currentColor" stroke-opacity="0.15" />` +
-        `<text x="${padding.left - 6}" y="${y(level) + 3}" text-anchor="end" font-size="9" fill="currentColor" fill-opacity="0.55">${escapeHtml(formatNumber(level))}</text>`,
-    )
-    .join("");
-
-  const polylines = series
-    .map((item, index) => {
-      const sorted = [...item.points].sort(([left], [right]) => left - right);
-      const path = sorted
-        .map(([timestamp, value]) => `${x(timestamp).toFixed(1)},${y(value).toFixed(1)}`)
-        .join(" ");
-      return `<polyline points="${path}" fill="none" stroke="${PALETTE[index % PALETTE.length]}" stroke-width="2" stroke-linejoin="round" />`;
-    })
-    .join("");
-  const timeLabels = `<text x="${padding.left}" y="${height - 8}" font-size="9" fill="currentColor" fill-opacity="0.55">${escapeHtml(formatAxisTime(minTime))}</text>
-    <text x="${width - padding.right}" y="${height - 8}" text-anchor="end" font-size="9" fill="currentColor" fill-opacity="0.55">${escapeHtml(formatAxisTime(maxTime))}</text>`;
-  return `<svg class="usage-chart" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">${gridLines}${polylines}${timeLabels}</svg>`;
-}
-
-function buildLegend(series: ChartSeries[]): string {
-  return series
-    .map(
-      (point, index) =>
-        `<span><span class="swatch" style="background:${PALETTE[index % PALETTE.length]}"></span>${escapeHtml(seriesLabel(point))}</span>`,
-    )
-    .join("");
-}
-
-function scopeLabel(point: { scope: string | null; attributes?: Record<string, string> }): string {
-  return point.scope ?? point.attributes?.model ?? point.attributes?.tier ?? "—";
-}
-
 function metricLabel(point: { metric?: string; unit?: string | null }): string {
   const metric = point.metric ?? "quota";
   return point.unit && point.unit !== "percent" ? `${metric} (${point.unit})` : metric;
@@ -370,14 +298,6 @@ function formatResetsAt(resetsAt: string | null): string {
   return `${absolute} (${hours > 0 ? `in ${hours}h ${minutes}m` : `in ${minutes}m`})`;
 }
 
-function formatAxisTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2, notation: Math.abs(value) >= 10_000 ? "compact" : "standard" }).format(value);
-}
-
 function initialRange(): HistoryRange {
   const candidate = new URL(window.location.href).searchParams.get("range");
   return candidate && isHistoryRange(candidate) ? candidate : "14d";
@@ -385,18 +305,6 @@ function initialRange(): HistoryRange {
 
 function isHistoryRange(value: string): value is HistoryRange {
   return value in HISTORY_RANGES;
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
 }
 
 void main();

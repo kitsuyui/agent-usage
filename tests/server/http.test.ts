@@ -126,6 +126,7 @@ describe("HTTP API", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       provider: string;
+      seriesId: string;
       window: string;
       scale: string;
       points: [number, number][];
@@ -138,6 +139,11 @@ describe("HTTP API", () => {
         points: [[Date.parse("2026-07-18T09:00:00Z"), 80]],
       }),
     ]);
+
+    const resetResponse = await fetch(`${baseUrl}/api/usage/next-resets`);
+    const resets = (await resetResponse.json()) as { provider: string; window: string; seriesId: string }[];
+    const reset = resets.find((entry) => entry.provider === "claude" && entry.window === "session");
+    expect(body[0]?.seriesId).toBe(reset?.seriesId);
   });
 
   test("GET /api/usage/chart requires a provider", async () => {
