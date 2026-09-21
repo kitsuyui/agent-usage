@@ -159,6 +159,7 @@ export interface ChartSeries {
   provider: string;
   scope: string | null;
   window: string;
+  windowSeconds: number | null;
   metric: string;
   unit: string | null;
   attributes: Record<string, string>;
@@ -435,6 +436,7 @@ export function chartSeriesFromHistory(points: HistoryPoint[]): ChartSeries[] {
       provider: point.provider,
       scope: point.scope,
       window: point.window,
+      windowSeconds: point.windowSeconds,
       metric: point.metric,
       unit: point.unit,
       attributes: point.attributes,

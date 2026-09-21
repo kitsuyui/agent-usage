@@ -1,8 +1,9 @@
 // Dependency-free dashboard: bounded history queries, per-unit charts, and a
 // next-resets table. The API downsamples each logical series before rendering.
 
-import { activeChartSeries, buildChartSvg, buildLegend, type ChartSeries } from "./chart.ts";
+import { activeChartSeries, buildChartSvg, buildLegend, groupChartSeries, type ChartSeries } from "./chart.ts";
 import { escapeHtml, formatNumber, scopeLabel } from "./format.ts";
+import { cycleViewLabel, historyQueryRange, normalizeHistoryRange, type HistoryRange } from "./history-range.ts";
 
 interface ProviderInfo {
   id: string;
@@ -56,14 +57,6 @@ type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw" | "seriesId"> & {
 const REFRESH_MS = 60_000;
 const MAX_POINTS_PER_SERIES = 480;
 const HISTORY_LIMIT = 100_000;
-const HISTORY_RANGES = {
-  "10h": "10 hours",
-  "14d": "14 days",
-  "30d": "30 days",
-  "90d": "90 days",
-} as const;
-type HistoryRange = keyof typeof HISTORY_RANGES;
-
 let selectedRange: HistoryRange = initialRange();
 let renderedRange: HistoryRange | null = null;
 
@@ -72,8 +65,9 @@ async function main(): Promise<void> {
   if (rangeSelect instanceof HTMLSelectElement) {
     rangeSelect.value = selectedRange;
     rangeSelect.addEventListener("change", () => {
-      if (!isHistoryRange(rangeSelect.value)) return;
-      selectedRange = rangeSelect.value;
+      const range = normalizeHistoryRange(rangeSelect.value);
+      if (!range) return;
+      selectedRange = range;
       const url = new URL(window.location.href);
       url.searchParams.set("range", selectedRange);
       window.history.replaceState(null, "", url);
@@ -108,7 +102,10 @@ async function refresh(): Promise<void> {
       withData.map(async (provider) => {
         const query = new URLSearchParams({
           provider: provider.id,
-          range: selectedRange,
+          range: historyQueryRange(
+            selectedRange,
+            longestCurrentCycleSeconds(provider.id, resets),
+          ),
           limit: String(HISTORY_LIMIT),
           maxPoints: String(MAX_POINTS_PER_SERIES),
         });
@@ -128,7 +125,7 @@ async function refresh(): Promise<void> {
     chartResults.forEach((result, index) => {
       if (result.status === "rejected") errorsByProvider.add(withData[index]!.id);
     });
-    renderCharts(chartsEl, providers, chartsByProvider, errorsByProvider, HISTORY_RANGES[selectedRange], resets);
+    renderCharts(chartsEl, providers, chartsByProvider, errorsByProvider, resets);
     renderedRange = selectedRange;
   } catch (error) {
     console.error(error);
@@ -203,7 +200,6 @@ function renderCharts(
   providers: ProviderInfo[],
   chartsByProvider: Map<string, ChartSeries[]>,
   errorsByProvider: Set<string>,
-  rangeLabel: string,
   resets: NextReset[],
 ): void {
   const now = Date.now();
@@ -215,20 +211,20 @@ function renderCharts(
   container.innerHTML = withData
     .map((provider) => {
       const series = activeChartSeries(chartsByProvider.get(provider.id) ?? [], resets);
-      const groups = groupByScale(series);
+      const groups = groupChartSeries(series);
       const body =
         errorsByProvider.has(provider.id)
           ? '<p class="empty-state">Chart data could not be loaded.</p>'
-          : groups.size === 0
+          : groups.length === 0
           ? '<p class="empty-state">No current chartable data in this range.</p>'
-          : [...groups.entries()]
-              .map(([scale, group]) => {
-                const svg = buildChartSvg(group, scale, resets, now);
+          : groups
+              .map((group) => {
+                const svg = buildChartSvg(group.series, group.scale, resets, now, group.cycleSeconds);
                 return `<section class="chart-group">
-                  <div class="chart-heading"><span>${escapeHtml(scaleLabel(group[0]!, scale))}</span><span>${escapeHtml(rangeLabel)}</span></div>
-                  <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group[0]!, scale))} history, reset times, and average pace">${svg}</div>
-                  <p class="chart-hint">Dashed vertical lines mark next resets; faint dotted lines mark prior observed resets. Dotted lines extend the current-cycle average pace. → means beyond the time axis.</p>
-                  <div class="chart-legend" role="list">${buildLegend(group, resets, now)}</div>
+                  <div class="chart-heading"><span>${escapeHtml(scaleLabel(group.series[0]!, group.scale))}</span><span>${escapeHtml(cycleViewLabel(group.cycleSeconds))}</span></div>
+                  <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group.series[0]!, group.scale))} history, reset times, and average pace">${svg}</div>
+                  <p class="chart-hint">Cycle charts show two cycles of history and one cycle of runway. Dashed vertical lines mark next resets; faint dotted lines mark prior observed resets. Dotted lines extend the current-cycle average pace.</p>
+                  <div class="chart-legend" role="list">${buildLegend(group.series, resets, now)}</div>
                 </section>`;
               })
               .join("");
@@ -241,21 +237,11 @@ function card(title: string, body: string): string {
   return `<div class="card"><h2>${escapeHtml(title)}</h2>${body}</div>`;
 }
 
-function groupByScale(series: ChartSeries[]): Map<string, ChartSeries[]> {
-  const groups = new Map<string, ChartSeries[]>();
-  for (const item of series) {
-    if (item.points.length === 0) continue;
-    const key = scaleKey(item);
-    const group = groups.get(key);
-    if (group) group.push(item);
-    else groups.set(key, [item]);
-  }
-  return groups;
-}
-
-function scaleKey(series: ChartSeries): string {
-  if (series.scale === "remaining-percent") return "remaining-percent";
-  return JSON.stringify([series.metric, series.unit ?? "value"]);
+function longestCurrentCycleSeconds(providerId: string, resets: NextReset[]): number | null {
+  const durations = resets
+    .filter((reset) => reset.provider === providerId && reset.windowSeconds !== null && reset.windowSeconds > 0)
+    .map((reset) => reset.windowSeconds!);
+  return durations.length === 0 ? null : Math.max(...durations);
 }
 
 function scaleLabel(series: ChartSeries, scale: string): string {
@@ -311,11 +297,7 @@ function formatResetsAt(resetsAt: string | null): string {
 
 function initialRange(): HistoryRange {
   const candidate = new URL(window.location.href).searchParams.get("range");
-  return candidate && isHistoryRange(candidate) ? candidate : "14d";
-}
-
-function isHistoryRange(value: string): value is HistoryRange {
-  return value in HISTORY_RANGES;
+  return normalizeHistoryRange(candidate) ?? "21d";
 }
 
 void main();

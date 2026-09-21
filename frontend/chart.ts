@@ -5,6 +5,8 @@ export interface ChartSeries {
   provider: string;
   scope: string | null;
   window: string;
+  /** Provider-reported duration persisted with this series; never inferred from its label. */
+  windowSeconds: number | null;
   metric: string;
   unit: string | null;
   attributes: Record<string, string>;
@@ -36,6 +38,12 @@ export interface CycleAverageTrend {
 
 const PALETTE = ["#6ea8fe", "#7ee7a8", "#f2b56b", "#f28b82", "#c792ea", "#7fd4d4", "#e6a4c4", "#a3be8c"];
 const HOUR = 3_600_000;
+
+export interface ChartGroup {
+  scale: string;
+  cycleSeconds: number | null;
+  series: ChartSeries[];
+}
 
 /**
  * Keeps the dashboard focused on buckets in the latest provider observation.
@@ -177,23 +185,78 @@ function visibleTrendEnd(
   return { time, value };
 }
 
-/** Keep nearby resets on the time axis without letting a distant reset squash the history. */
-export function chartTimeDomain(series: ChartSeries[], resets: ChartReset[], now: number): { min: number; max: number } {
-  const times = series.flatMap((item) => item.points.map(([time]) => time));
-  const min = Math.min(now - HOUR, ...times);
-  const byId = new Map(resets.map((reset) => [reset.seriesId, reset]));
-  const upcoming = series.map((item) => resetTime(byId.get(item.seriesId))).filter((time): time is number => time !== null && time > now);
-  const futureBudget = (now - min) / 2;
-  const max = upcoming.length === 0
-    ? now
-    : Math.min(now + futureBudget, Math.max(...upcoming) + futureBudget * 0.08);
-  return { min, max };
+/**
+ * Groups comparable measurements by both scale and provider-reported duration.
+ * A percentage left in a five-hour session is not comparable to a weekly one.
+ */
+export function groupChartSeries(series: ChartSeries[]): ChartGroup[] {
+  const groups = new Map<string, ChartGroup>();
+  for (const item of series) {
+    if (item.points.length === 0) continue;
+    const scale = item.scale === "remaining-percent"
+      ? "remaining-percent"
+      : JSON.stringify([item.metric, item.unit ?? "value"]);
+    const cycleSeconds = item.windowSeconds && item.windowSeconds > 0 ? item.windowSeconds : null;
+    const key = JSON.stringify([scale, cycleSeconds]);
+    const group = groups.get(key);
+    if (group) group.series.push(item);
+    else groups.set(key, { scale, cycleSeconds, series: [item] });
+  }
+  return [...groups.values()];
 }
 
-export function buildChartSvg(series: ChartSeries[], scale: string, resets: ChartReset[], now: number): string {
+function hasCurrentCycleContext(
+  series: ChartSeries[],
+  resets: ChartReset[],
+  now: number,
+  cycleSeconds: number | null | undefined,
+): cycleSeconds is number {
+  if (!cycleSeconds || cycleSeconds <= 0) return false;
+  const byId = new Map(resets.map((reset) => [reset.seriesId, reset]));
+  return series.every((item) => {
+    const next = resetTime(byId.get(item.seriesId));
+    return next !== null && next > now;
+  });
+}
+
+/**
+ * A known reset cycle is intentionally rendered as two cycles of context and
+ * one cycle of runway. That makes Now land at the same 2/3 position in every
+ * cycle chart, instead of letting an unrelated future reset change its x-axis.
+ */
+export function chartTimeDomain(
+  series: ChartSeries[],
+  resets: ChartReset[],
+  now: number,
+  cycleSeconds?: number | null,
+): { min: number; max: number } {
+  if (hasCurrentCycleContext(series, resets, now, cycleSeconds)) {
+    const durationMs = cycleSeconds * 1_000;
+    return { min: now - 2 * durationMs, max: now + durationMs };
+  }
+
+  const times = series.flatMap((item) => item.points.map(([time]) => time));
+  if (times.length === 0) return { min: now - HOUR, max: now };
+  const min = Math.min(...times);
+  const byId = new Map(resets.map((reset) => [reset.seriesId, reset]));
+  const upcoming = series
+    .map((item) => resetTime(byId.get(item.seriesId)))
+    .filter((time): time is number => time !== null && time > now);
+  const max = Math.max(...times, now, ...upcoming);
+  return max > min ? { min, max } : { min: min - HOUR / 2, max: max + HOUR / 2 };
+}
+
+export function buildChartSvg(
+  series: ChartSeries[],
+  scale: string,
+  resets: ChartReset[],
+  now: number,
+  cycleSeconds?: number | null,
+): string {
   const points = series.flatMap((item) => item.points);
   if (points.length === 0) return "";
   const byId = new Map(resets.map((reset) => [reset.seriesId, reset]));
+  const showCycleContext = hasCurrentCycleContext(series, resets, now, cycleSeconds);
   const upcoming = series.flatMap((item, index) => {
     const time = resetTime(byId.get(item.seriesId));
     return time !== null && time > now ? [{ item, index, time }] : [];
@@ -203,7 +266,7 @@ export function buildChartSvg(series: ChartSeries[], scale: string, resets: Char
   const plotHeight = 194;
   const height = padding.top + plotHeight + padding.bottom;
   const plotWidth = width - padding.left - padding.right;
-  const { min: minTime, max: maxTime } = chartTimeDomain(series, resets, now);
+  const { min: minTime, max: maxTime } = chartTimeDomain(series, resets, now, cycleSeconds);
   const timeSpan = Math.max(1, maxTime - minTime);
   const values = points.map(([, value]) => value);
   const percentScale = scale === "remaining-percent";
@@ -222,7 +285,7 @@ export function buildChartSvg(series: ChartSeries[], scale: string, resets: Char
     `<line x1="${padding.left}" y1="${y(level)}" x2="${plotRight}" y2="${y(level)}" stroke="currentColor" stroke-opacity="0.15" />` +
     `<text x="${padding.left - 8}" y="${y(level) + 4}" text-anchor="end" class="axis-label">${escapeHtml(formatNumber(level))}</text>`,
   ).join("");
-  const future = upcoming.length === 0 ? "" :
+  const future = !showCycleContext ? "" :
     `<rect x="${x(now)}" y="${padding.top}" width="${plotRight - x(now)}" height="${plotHeight}" class="future-area" />` +
     `<line x1="${x(now)}" y1="${padding.top}" x2="${x(now)}" y2="${plotBottom}" class="now-line" />` +
     `<text x="${x(now)}" y="${padding.top - 10}" text-anchor="middle" class="axis-label">Now</text>`;
@@ -254,7 +317,7 @@ export function buildChartSvg(series: ChartSeries[], scale: string, resets: Char
     const path = sorted.map(([timestamp, value]) => `${x(timestamp).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
     return `<polyline points="${path}" fill="none" stroke="${PALETTE[index % PALETTE.length]}" stroke-width="2" stroke-linejoin="round" />`;
   }).join("");
-  const averagePaceLines = series.map((item, index) => {
+  const averagePaceLines = !showCycleContext ? "" : series.map((item, index) => {
     const trend = cycleAverageTrend(item, byId.get(item.seriesId), now);
     if (!trend) return "";
     const end = visibleTrendEnd(trend, maxTime, minValue, maxValue);

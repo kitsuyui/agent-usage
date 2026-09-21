@@ -5,6 +5,7 @@ import {
   buildLegend,
   chartTimeDomain,
   cycleAverageTrend,
+  groupChartSeries,
   type ChartReset,
   type ChartSeries,
 } from "../../frontend/chart.ts";
@@ -14,7 +15,7 @@ const NOW = Date.parse("2026-09-10T00:00:00Z");
 
 function series(overrides: Partial<ChartSeries> = {}): ChartSeries {
   return {
-    seriesId: "session", provider: "example", scope: null, window: "session",
+    seriesId: "session", provider: "example", scope: null, window: "session", windowSeconds: 5 * 60 * 60,
     metric: "quota", unit: "percent", attributes: {}, scale: "remaining-percent",
     points: [[NOW - 10 * HOUR, 100], [NOW - HOUR, 45]], ...overrides,
   };
@@ -34,14 +35,17 @@ describe("chart reset annotations", () => {
     ]);
   });
 
-  test("places a nearby next reset on the time axis without projecting future usage", () => {
+  test("uses two past cycles and one future cycle for a known reset duration", () => {
     const resets = [reset("session", NOW + 2 * HOUR)];
-    const svg = buildChartSvg([series()], "remaining-percent", resets, NOW);
-    const domain = chartTimeDomain([series()], resets, NOW);
-    expect(domain.min).toBe(NOW - 10 * HOUR);
-    expect(domain.max).toBeGreaterThan(NOW + 2 * HOUR);
+    const item = series();
+    const svg = buildChartSvg([item], "remaining-percent", resets, NOW, item.windowSeconds);
+    const domain = chartTimeDomain([item], resets, NOW, item.windowSeconds);
+    expect(domain).toEqual({ min: NOW - 10 * HOUR, max: NOW + 5 * HOUR });
     expect(svg).toContain(`data-reset-at="${NOW + 2 * HOUR}"`);
     expect(svg).toContain(">Now</text>");
+    const nowLine = svg.match(/<line x1="([^"]+)" y1="[^"]+" x2="[^"]+" y2="[^"]+" class="now-line"/);
+    const expectedNowX = 52 + (900 - 52 - 16) * 2 / 3;
+    expect(nowLine?.[1]).toBe(String(expectedNowX));
     const polyline = svg.match(/<polyline points="([^"]*)"/)![1]!;
     expect(polyline.split(" ")).toHaveLength(2);
     expect(svg).not.toMatch(/NaN|Infinity/);
@@ -76,7 +80,7 @@ describe("chart reset annotations", () => {
     });
     expect(trend?.ratePerMs).toBeCloseTo(-10 / HOUR);
 
-    const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW);
+    const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW, item.windowSeconds);
     expect(svg).toContain(`data-previous-reset-at="${NOW - 6 * HOUR}"`);
     expect(svg).toContain(`data-average-pace-to="${NOW + 2 * HOUR}"`);
     expect(svg).toContain('class="average-pace"');
@@ -94,16 +98,17 @@ describe("chart reset annotations", () => {
       previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
       resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
     };
-    const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW);
+    const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW, item.windowSeconds);
     expect(svg).toContain('class="average-pace average-pace-depleting"');
     expect(svg).not.toMatch(/NaN|Infinity/);
   });
 
-  test("a distant reset keeps at least two-thirds of the time axis for history", () => {
+  test("a future reset never changes the fixed cycle viewport", () => {
     const resets = [reset("session", NOW + 30 * 24 * HOUR)];
-    const domain = chartTimeDomain([series()], resets, NOW);
-    const svg = buildChartSvg([series()], "remaining-percent", resets, NOW);
-    expect(domain.max).toBe(NOW + 5 * HOUR);
+    const item = series();
+    const domain = chartTimeDomain([item], resets, NOW, item.windowSeconds);
+    const svg = buildChartSvg([item], "remaining-percent", resets, NOW, item.windowSeconds);
+    expect(domain).toEqual({ min: NOW - 10 * HOUR, max: NOW + 5 * HOUR });
     expect(svg).toContain("beyond the visible time axis");
     expect(svg).toContain("→");
     expect(svg).not.toContain("data-reset-at=");
@@ -126,7 +131,7 @@ describe("chart reset annotations", () => {
   test("two series sharing a reset retain separate labels", () => {
     const group = [series(), series({ seriesId: "week", window: "week" })];
     const resets = [reset("session", NOW + HOUR), reset("week", NOW + HOUR)];
-    const svg = buildChartSvg(group, "remaining-percent", resets, NOW);
+    const svg = buildChartSvg(group, "remaining-percent", resets, NOW, 5 * 60 * 60);
     expect(svg).toContain(">1 · ");
     expect(svg).toContain(">2 · ");
     const labelRows = [...svg.matchAll(/<rect x="[^"]+" y="([^"]+)" width="184"/g)].map((match) => match[1]);
@@ -135,10 +140,26 @@ describe("chart reset annotations", () => {
 
   test.each([null, "not-a-date"])("unknown reset %s creates no future marker", (resetsAt) => {
     const resets = [{ seriesId: "session", resetsAt }];
-    const svg = buildChartSvg([series()], "remaining-percent", resets, NOW);
+    const item = series();
+    const svg = buildChartSvg([item], "remaining-percent", resets, NOW, item.windowSeconds);
     expect(svg).not.toContain('class="reset-marker"');
     expect(svg).not.toContain('class="future-area"');
     expect(buildLegend([series()], resets, NOW)).toContain("Reset time unavailable");
+  });
+
+  test("unknown reset data does not invent a Now line or pace forecast", () => {
+    const item = series();
+    const svg = buildChartSvg([item], "remaining-percent", [{ seriesId: item.seriesId, resetsAt: null }], NOW, item.windowSeconds);
+    expect(svg).not.toContain('class="now-line"');
+    expect(svg).not.toContain('class="average-pace"');
+  });
+
+  test("separates equal-scale session and weekly series by provider-reported duration", () => {
+    const session = series();
+    const weekly = series({ seriesId: "weekly", window: "week", windowSeconds: 7 * 24 * 60 * 60 });
+    const groups = groupChartSeries([session, weekly]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.cycleSeconds)).toEqual([5 * 60 * 60, 7 * 24 * 60 * 60]);
   });
 
   test("past reported resets are awaiting update rather than a new inferred period", () => {
