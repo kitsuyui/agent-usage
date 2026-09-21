@@ -37,6 +37,17 @@ export interface CycleAverageTrend {
 const PALETTE = ["#6ea8fe", "#7ee7a8", "#f2b56b", "#f28b82", "#c792ea", "#7fd4d4", "#e6a4c4", "#a3be8c"];
 const HOUR = 3_600_000;
 
+/**
+ * Keeps the dashboard focused on buckets in the latest provider observation.
+ * Historical series remain available from the API, but a removed or replaced
+ * provider bucket must not look like a current limit merely because it has
+ * observations inside the selected history range.
+ */
+export function activeChartSeries(series: ChartSeries[], currentWindows: ChartReset[]): ChartSeries[] {
+  const currentIds = new Set(currentWindows.map((window) => window.seriesId));
+  return series.filter((item) => currentIds.has(item.seriesId));
+}
+
 export function seriesLabel(series: ChartSeries): string {
   const attributes = Object.entries(series.attributes)
     .sort(([left], [right]) => left.localeCompare(right))

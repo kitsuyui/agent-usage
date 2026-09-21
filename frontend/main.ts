@@ -1,7 +1,7 @@
 // Dependency-free dashboard: bounded history queries, per-unit charts, and a
 // next-resets table. The API downsamples each logical series before rendering.
 
-import { buildChartSvg, buildLegend, type ChartSeries } from "./chart.ts";
+import { activeChartSeries, buildChartSvg, buildLegend, type ChartSeries } from "./chart.ts";
 import { escapeHtml, formatNumber, scopeLabel } from "./format.ts";
 
 interface ProviderInfo {
@@ -214,13 +214,13 @@ function renderCharts(
   }
   container.innerHTML = withData
     .map((provider) => {
-      const series = chartsByProvider.get(provider.id) ?? [];
+      const series = activeChartSeries(chartsByProvider.get(provider.id) ?? [], resets);
       const groups = groupByScale(series);
       const body =
         errorsByProvider.has(provider.id)
           ? '<p class="empty-state">Chart data could not be loaded.</p>'
           : groups.size === 0
-          ? '<p class="empty-state">No chartable data in this range.</p>'
+          ? '<p class="empty-state">No current chartable data in this range.</p>'
           : [...groups.entries()]
               .map(([scale, group]) => {
                 const svg = buildChartSvg(group, scale, resets, now);

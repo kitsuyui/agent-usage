@@ -133,6 +133,14 @@ slice and may downsample each series independently, retaining endpoints and
 local extrema, so growing retention does not make dashboard payloads grow
 without bound.
 
+The dashboard takes the complete `seriesId` set from the latest provider
+observation as its active set, then filters a range's chart history to that
+set. A provider can therefore remove, rename, or replace a quota bucket
+without a catalog edit: buckets newly reported in the latest observation
+appear automatically, while omitted buckets stop being presented as current.
+The stored history is not deleted and remains available through the history
+APIs.
+
 ## Extensibility points
 
 - **New provider**: see [`providers.md`](providers.md).

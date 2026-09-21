@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  activeChartSeries,
   buildChartSvg,
   buildLegend,
   chartTimeDomain,
@@ -24,6 +25,15 @@ function reset(seriesId: string, time: number): ChartReset {
 }
 
 describe("chart reset annotations", () => {
+  test("only keeps series reported by the latest provider observation", () => {
+    const retired = series({ seriesId: "retired", scope: "legacy" });
+    const replacement = series({ seriesId: "replacement", scope: "current" });
+
+    expect(activeChartSeries([retired, replacement], [reset("replacement", NOW + HOUR)])).toEqual([
+      replacement,
+    ]);
+  });
+
   test("places a nearby next reset on the time axis without projecting future usage", () => {
     const resets = [reset("session", NOW + 2 * HOUR)];
     const svg = buildChartSvg([series()], "remaining-percent", resets, NOW);
