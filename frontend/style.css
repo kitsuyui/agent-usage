@@ -199,6 +199,24 @@ svg.usage-chart {
   stroke-opacity: 0.65;
 }
 
+.previous-reset-line {
+  stroke-opacity: 0.3;
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.average-pace {
+  fill: none;
+  stroke-width: 2;
+  stroke-opacity: 0.9;
+  stroke-dasharray: 6 5;
+  stroke-linecap: round;
+}
+
+.average-pace-depleting {
+  stroke: var(--danger);
+}
+
 .reset-label-bg {
   fill: var(--panel);
 }
