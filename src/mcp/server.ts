@@ -103,7 +103,7 @@ export function createMcpServer(db: PrismaClient, staleAfterSeconds?: number): M
     "get_next_resets",
     {
       title: "Get next reset times",
-      description: "Returns each provider's most recently observed rate-limit windows and when they next reset.",
+      description: "Returns each provider's most recently observed rate-limit windows, their next reset, and an observed current-cycle pace when history spans the prior reset.",
     },
     async () => textResult(await nextResets(db)),
   );

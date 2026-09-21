@@ -75,6 +75,54 @@ describe("repository", () => {
     expect(codexReset?.resetsAt).toBe("2026-07-18T14:00:00Z");
   });
 
+  test("reports the observed reset boundary before the current cycle", async () => {
+    await recordSnapshot(
+      db,
+      snapshotFromWindows("cycle-boundary", "2026-07-22T09:50:00Z", [
+        usedWindow({
+          window: "session",
+          usedPercent: 90,
+          resetsAt: "2026-07-22T10:00:00Z",
+          observedAt: "2026-07-22T09:50:00Z",
+        }),
+      ]),
+    );
+    await recordSnapshot(
+      db,
+      snapshotFromWindows("cycle-boundary", "2026-07-22T10:10:00Z", [
+        usedWindow({
+          window: "session",
+          usedPercent: 5,
+          resetsAt: "2026-07-22T15:00:00Z",
+          observedAt: "2026-07-22T10:10:00Z",
+        }),
+      ]),
+    );
+    await recordSnapshot(
+      db,
+      snapshotFromWindows("cycle-boundary", "2026-07-22T10:20:00Z", [
+        usedWindow({
+          window: "session",
+          usedPercent: 15,
+          resetsAt: "2026-07-22T15:00:00Z",
+          observedAt: "2026-07-22T10:20:00Z",
+        }),
+      ]),
+    );
+
+    const reset = (await nextResets(db)).find((entry) => entry.provider === "cycle-boundary");
+    expect(reset).toMatchObject({
+      resetsAt: "2026-07-22T15:00:00Z",
+      previousResetAt: "2026-07-22T10:00:00Z",
+      cyclePace: {
+        firstObservedAt: "2026-07-22T10:10:00Z",
+        firstRemainingPercent: 95,
+        latestObservedAt: "2026-07-22T10:20:00Z",
+        latestRemainingPercent: 85,
+      },
+    });
+  });
+
   test("queries history filtered by provider and window", async () => {
     const points = await queryHistory(db, { provider: "claude", window: "session" });
     expect(points.length).toBeGreaterThanOrEqual(2);

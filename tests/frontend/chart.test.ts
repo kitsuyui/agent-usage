@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { buildChartSvg, buildLegend, chartTimeDomain, type ChartReset, type ChartSeries } from "../../frontend/chart.ts";
+import {
+  buildChartSvg,
+  buildLegend,
+  chartTimeDomain,
+  cycleAverageTrend,
+  type ChartReset,
+  type ChartSeries,
+} from "../../frontend/chart.ts";
 
 const HOUR = 3_600_000;
 const NOW = Date.parse("2026-09-10T00:00:00Z");
@@ -29,6 +36,57 @@ describe("chart reset annotations", () => {
     expect(polyline.split(" ")).toHaveLength(2);
     expect(svg).not.toMatch(/NaN|Infinity/);
     expect(buildLegend([series()], resets, NOW)).toContain("in 2h 0m");
+  });
+
+  test("extends the current-cycle average pace without mixing an earlier cycle", () => {
+    const item = series({
+      points: [
+        [NOW - 12 * HOUR, 15],
+        [NOW - 4 * HOUR, 70],
+        [NOW - HOUR, 50],
+      ],
+    });
+    const cycle = {
+      seriesId: "session",
+      previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
+      resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
+      cyclePace: {
+        firstObservedAt: new Date(NOW - 6 * HOUR).toISOString(),
+        firstRemainingPercent: 100,
+        latestObservedAt: new Date(NOW - HOUR).toISOString(),
+        latestRemainingPercent: 50,
+      },
+    };
+
+    const trend = cycleAverageTrend(item, cycle, NOW);
+    expect(trend).toMatchObject({
+      firstObservedAt: NOW - 6 * HOUR,
+      observedAt: NOW - HOUR,
+      projectedValue: 20,
+    });
+    expect(trend?.ratePerMs).toBeCloseTo(-10 / HOUR);
+
+    const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW);
+    expect(svg).toContain(`data-previous-reset-at="${NOW - 6 * HOUR}"`);
+    expect(svg).toContain(`data-average-pace-to="${NOW + 2 * HOUR}"`);
+    expect(svg).toContain('class="average-pace"');
+    expect(buildLegend([item], [cycle], NOW)).toContain("Cycle began");
+  });
+
+  test("does not estimate a pace until a prior reset boundary is observed", () => {
+    expect(cycleAverageTrend(series(), reset("session", NOW + HOUR), NOW)).toBeNull();
+  });
+
+  test("marks a pace that reaches zero before the next reset", () => {
+    const item = series({ points: [[NOW - 6 * HOUR, 100], [NOW - HOUR, 20]] });
+    const cycle = {
+      seriesId: "session",
+      previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
+      resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
+    };
+    const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW);
+    expect(svg).toContain('class="average-pace average-pace-depleting"');
+    expect(svg).not.toMatch(/NaN|Infinity/);
   });
 
   test("a distant reset keeps at least two-thirds of the time axis for history", () => {

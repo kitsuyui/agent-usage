@@ -206,41 +206,169 @@ export interface NextReset {
   attributes: Record<string, string>;
   cliVersion: string | null;
   resetsAt: string | null;
+  previousResetAt: string | null;
+  cyclePace: CyclePace | null;
   remainingPercent: number | null;
   usedPercent: number | null;
 }
 
-/** The latest known reset time for every window of every provider with data. */
+export interface CyclePace {
+  firstObservedAt: string;
+  firstRemainingPercent: number;
+  latestObservedAt: string;
+  latestRemainingPercent: number;
+}
+
+/** The latest reset time and, when observed, its preceding reset boundary. */
 export async function nextResets(db: PrismaClient): Promise<NextReset[]> {
   const snapshots = await latestSnapshots(db);
-  return snapshots.flatMap((snapshot) =>
-    snapshot.windows.map((window) => ({
-      provider: snapshot.provider,
-      seriesId: seriesId({
-        provider: snapshot.provider,
-        scope: window.scope ?? null,
-        window: window.window,
-        windowSeconds: window.windowSeconds ?? null,
-        metric: window.metric ?? "quota",
-        unit: window.unit ?? null,
-        attributes: window.attributes ?? {},
+  return Promise.all(
+    snapshots.flatMap((snapshot) =>
+      snapshot.windows.map(async (window) => {
+        const identity = resetIdentity(snapshot, window);
+        const previous = await previousResetAt(db, identity, window.resetsAt, snapshot.observedAt);
+        return {
+          ...identity,
+          seriesId: seriesId(identity),
+          value: window.value ?? null,
+          limitValue: window.limitValue ?? null,
+          remainingValue: window.remainingValue ?? null,
+          usedValue: window.usedValue ?? null,
+          cliVersion: snapshot.cliVersion ?? null,
+          resetsAt: window.resetsAt ?? null,
+          previousResetAt: previous,
+          cyclePace: await currentCyclePace(
+            db,
+            identity,
+            previous,
+            window.resetsAt,
+            snapshot.observedAt,
+            remainingPercentOf(window),
+          ),
+          remainingPercent: window.remainingPercent ?? null,
+          usedPercent: window.usedPercent ?? null,
+        };
       }),
-      scope: window.scope ?? null,
-      window: window.window,
-      windowSeconds: window.windowSeconds ?? null,
-      metric: window.metric ?? "quota",
-      unit: window.unit ?? null,
-      value: window.value ?? null,
-      limitValue: window.limitValue ?? null,
-      remainingValue: window.remainingValue ?? null,
-      usedValue: window.usedValue ?? null,
-      attributes: window.attributes ?? {},
-      cliVersion: snapshot.cliVersion ?? null,
-      resetsAt: window.resetsAt ?? null,
-      remainingPercent: window.remainingPercent ?? null,
-      usedPercent: window.usedPercent ?? null,
-    })),
+    ),
   );
+}
+
+function resetIdentity(
+  snapshot: UsageSnapshot,
+  window: UsageWindow,
+): {
+  provider: string;
+  scope: string | null;
+  window: string;
+  windowSeconds: number | null;
+  metric: string;
+  unit: string | null;
+  attributes: Record<string, string>;
+} {
+  return {
+    provider: snapshot.provider,
+    scope: window.scope ?? null,
+    window: window.window,
+    windowSeconds: window.windowSeconds ?? null,
+    metric: window.metric ?? "quota",
+    unit: window.unit ?? null,
+    attributes: window.attributes ?? {},
+  };
+}
+
+function resetIdentityWhere(identity: ReturnType<typeof resetIdentity>) {
+  const attributes = Object.keys(identity.attributes).length > 0
+    ? { attributesJson: canonicalAttributes(identity.attributes) }
+    : { OR: [{ attributesJson: null }, { attributesJson: "{}" }] };
+  return {
+    provider: identity.provider,
+    scope: identity.scope,
+    window: identity.window,
+    windowSeconds: identity.windowSeconds,
+    metric: identity.metric,
+    unit: identity.unit,
+    ...attributes,
+  };
+}
+
+async function previousResetAt(
+  db: PrismaClient,
+  identity: ReturnType<typeof resetIdentity>,
+  currentResetAt: string | undefined,
+  latestObservedAt: string,
+): Promise<string | null> {
+  if (!currentResetAt) return null;
+  const currentTime = Date.parse(currentResetAt);
+  const observedTime = Date.parse(latestObservedAt);
+  if (!Number.isFinite(currentTime) || !Number.isFinite(observedTime) || currentTime <= observedTime) return null;
+
+  const row = await db.window.findFirst({
+    where: {
+      ...resetIdentityWhere(identity),
+      resetsAt: { lte: new Date(observedTime) },
+    },
+    orderBy: { resetsAt: "desc" },
+    select: { resetsAt: true },
+  });
+  return row?.resetsAt ? toIsoSeconds(row.resetsAt) : null;
+}
+
+async function currentCyclePace(
+  db: PrismaClient,
+  identity: ReturnType<typeof resetIdentity>,
+  previousResetAt: string | null,
+  currentResetAt: string | undefined,
+  latestObservedAt: string,
+  latestRemainingPercent: number | null,
+): Promise<CyclePace | null> {
+  if (!previousResetAt || !currentResetAt || latestRemainingPercent === null) return null;
+  const cycleStart = Date.parse(previousResetAt);
+  const currentReset = Date.parse(currentResetAt);
+  const latest = Date.parse(latestObservedAt);
+  if (
+    !Number.isFinite(cycleStart) ||
+    !Number.isFinite(currentReset) ||
+    !Number.isFinite(latest) ||
+    cycleStart >= latest ||
+    currentReset <= latest
+  ) {
+    return null;
+  }
+
+  const first = await db.window.findFirst({
+    where: {
+      ...resetIdentityWhere(identity),
+      observedAt: { gte: new Date(cycleStart), lte: new Date(latest) },
+      resetsAt: { gt: new Date(cycleStart) },
+    },
+    orderBy: { observedAt: "asc" },
+    select: { observedAt: true, remainingPercent: true, usedPercent: true },
+  });
+  const firstRemainingPercent = first ? remainingPercentOf(first) : null;
+  if (
+    !first ||
+    firstRemainingPercent === null ||
+    first.observedAt.getTime() >= latest ||
+    !Number.isFinite(firstRemainingPercent) ||
+    !Number.isFinite(latestRemainingPercent)
+  ) {
+    return null;
+  }
+  return {
+    firstObservedAt: toIsoSeconds(first.observedAt),
+    firstRemainingPercent,
+    latestObservedAt,
+    latestRemainingPercent,
+  };
+}
+
+function remainingPercentOf(window: {
+  remainingPercent?: number | null;
+  usedPercent?: number | null;
+}): number | null {
+  if (window.remainingPercent !== null && window.remainingPercent !== undefined) return window.remainingPercent;
+  if (window.usedPercent !== null && window.usedPercent !== undefined) return 100 - window.usedPercent;
+  return null;
 }
 
 function toSnapshot(sample: SampleWithWindows): UsageSnapshot {

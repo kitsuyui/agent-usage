@@ -40,7 +40,18 @@ interface HistoryPoint {
   resetsAt: string | null;
 }
 
-type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw" | "seriesId"> & { seriesId: string };
+interface CyclePace {
+  firstObservedAt: string;
+  firstRemainingPercent: number;
+  latestObservedAt: string;
+  latestRemainingPercent: number;
+}
+
+type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw" | "seriesId"> & {
+  seriesId: string;
+  previousResetAt: string | null;
+  cyclePace: CyclePace | null;
+};
 
 const REFRESH_MS = 60_000;
 const MAX_POINTS_PER_SERIES = 480;
@@ -215,8 +226,8 @@ function renderCharts(
                 const svg = buildChartSvg(group, scale, resets, now);
                 return `<section class="chart-group">
                   <div class="chart-heading"><span>${escapeHtml(scaleLabel(group[0]!, scale))}</span><span>${escapeHtml(rangeLabel)}</span></div>
-                  <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group[0]!, scale))} history and reset times">${svg}</div>
-                  <p class="chart-hint">Dashed lines mark next resets. → means beyond the time axis.</p>
+                  <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group[0]!, scale))} history, reset times, and average pace">${svg}</div>
+                  <p class="chart-hint">Dashed vertical lines mark next resets; faint dotted lines mark prior observed resets. Dotted lines extend the current-cycle average pace. → means beyond the time axis.</p>
                   <div class="chart-legend" role="list">${buildLegend(group, resets, now)}</div>
                 </section>`;
               })

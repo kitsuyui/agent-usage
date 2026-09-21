@@ -15,6 +15,23 @@ export interface ChartSeries {
 export interface ChartReset {
   seriesId: string;
   resetsAt: string | null;
+  previousResetAt?: string | null;
+  cyclePace?: {
+    firstObservedAt: string;
+    firstRemainingPercent: number;
+    latestObservedAt: string;
+    latestRemainingPercent: number;
+  } | null;
+}
+
+export interface CycleAverageTrend {
+  firstObservedAt: number;
+  firstValue: number;
+  observedAt: number;
+  observedValue: number;
+  resetsAt: number;
+  ratePerMs: number;
+  projectedValue: number;
 }
 
 const PALETTE = ["#6ea8fe", "#7ee7a8", "#f2b56b", "#f28b82", "#c792ea", "#7fd4d4", "#e6a4c4", "#a3be8c"];
@@ -30,6 +47,12 @@ export function seriesLabel(series: ChartSeries): string {
 function resetTime(reset: ChartReset | undefined): number | null {
   if (!reset?.resetsAt) return null;
   const time = Date.parse(reset.resetsAt);
+  return Number.isFinite(time) ? time : null;
+}
+
+function previousResetTime(reset: ChartReset | undefined): number | null {
+  if (!reset?.previousResetAt) return null;
+  const time = Date.parse(reset.previousResetAt);
   return Number.isFinite(time) ? time : null;
 }
 
@@ -52,7 +75,95 @@ function resetDescription(reset: ChartReset | undefined, now: number): string {
   const time = resetTime(reset);
   if (time === null) return reset ? "Reset time unavailable" : "No current reset data";
   if (time <= now) return `Reported reset ${absoluteResetTime(time)} · awaiting update`;
-  return `Next reset ${absoluteResetTime(time)} · ${countdown(time, now)}`;
+  const previous = previousResetTime(reset);
+  const cycleStart = previous !== null && previous < now ? `Cycle began ${absoluteResetTime(previous)} · ` : "";
+  return `${cycleStart}Next reset ${absoluteResetTime(time)} · ${countdown(time, now)}`;
+}
+
+/**
+ * A single, transparent pace estimate: net change between the first and last
+ * observations in the currently observed reset cycle. It deliberately does
+ * not infer a boundary from a nominal duration.
+ */
+export function cycleAverageTrend(
+  series: ChartSeries,
+  reset: ChartReset | undefined,
+  now: number,
+): CycleAverageTrend | null {
+  if (series.scale !== "remaining-percent") return null;
+  const previous = previousResetTime(reset);
+  const next = resetTime(reset);
+  if (previous === null || next === null || previous >= next || next <= now) return null;
+
+  const reportedPace = reset?.cyclePace;
+  if (reportedPace) {
+    const firstObservedAt = Date.parse(reportedPace.firstObservedAt);
+    const observedAt = Date.parse(reportedPace.latestObservedAt);
+    if (
+      Number.isFinite(firstObservedAt) &&
+      Number.isFinite(observedAt) &&
+      Number.isFinite(reportedPace.firstRemainingPercent) &&
+      Number.isFinite(reportedPace.latestRemainingPercent) &&
+      firstObservedAt >= previous &&
+      firstObservedAt < observedAt &&
+      observedAt <= now &&
+      observedAt < next
+    ) {
+      const ratePerMs = (reportedPace.latestRemainingPercent - reportedPace.firstRemainingPercent) /
+        (observedAt - firstObservedAt);
+      return {
+        firstObservedAt,
+        firstValue: reportedPace.firstRemainingPercent,
+        observedAt,
+        observedValue: reportedPace.latestRemainingPercent,
+        resetsAt: next,
+        ratePerMs,
+        projectedValue: reportedPace.latestRemainingPercent + ratePerMs * (next - observedAt),
+      };
+    }
+  }
+
+  const points = [...series.points]
+    .sort(([left], [right]) => left - right)
+    .filter(([time]) => time >= previous && time <= now && time < next);
+  if (points.length < 2) return null;
+  const first = points[0]!;
+  const latest = points.at(-1)!;
+  const elapsed = latest[0] - first[0];
+  if (elapsed <= 0) return null;
+
+  const ratePerMs = (latest[1] - first[1]) / elapsed;
+  return {
+    firstObservedAt: first[0],
+    firstValue: first[1],
+    observedAt: latest[0],
+    observedValue: latest[1],
+    resetsAt: next,
+    ratePerMs,
+    projectedValue: latest[1] + ratePerMs * (next - latest[0]),
+  };
+}
+
+function trendValueAt(trend: CycleAverageTrend, time: number): number {
+  return trend.observedValue + trend.ratePerMs * (time - trend.observedAt);
+}
+
+function visibleTrendEnd(
+  trend: CycleAverageTrend,
+  maxTime: number,
+  minValue: number,
+  maxValue: number,
+): { time: number; value: number } {
+  let time = Math.min(trend.resetsAt, maxTime);
+  let value = trendValueAt(trend, time);
+  if (trend.ratePerMs < 0 && value < minValue) {
+    time = trend.observedAt + (minValue - trend.observedValue) / trend.ratePerMs;
+    value = minValue;
+  } else if (trend.ratePerMs > 0 && value > maxValue) {
+    time = trend.observedAt + (maxValue - trend.observedValue) / trend.ratePerMs;
+    value = maxValue;
+  }
+  return { time, value };
 }
 
 /** Keep nearby resets on the time axis without letting a distant reset squash the history. */
@@ -107,6 +218,11 @@ export function buildChartSvg(series: ChartSeries[], scale: string, resets: Char
   const resetLines = upcoming.map(({ index, time }) => time > maxTime ? "" :
     `<line data-reset-at="${time}" x1="${x(time)}" y1="${padding.top}" x2="${x(time)}" y2="${plotBottom}" stroke="${PALETTE[index % PALETTE.length]}" stroke-width="1.5" stroke-dasharray="5 5" />`,
   ).join("");
+  const previousResetLines = upcoming.map(({ item, index }) => {
+    const time = previousResetTime(byId.get(item.seriesId));
+    if (time === null || time < minTime || time > maxTime) return "";
+    return `<line data-previous-reset-at="${time}" x1="${x(time)}" y1="${padding.top}" x2="${x(time)}" y2="${plotBottom}" class="previous-reset-line" stroke="${PALETTE[index % PALETTE.length]}" />`;
+  }).join("");
   const resetLabels = upcoming.map(({ item, index, time }, lane) => {
     const outside = time > maxTime;
     const markerX = outside ? plotRight : x(time);
@@ -127,12 +243,28 @@ export function buildChartSvg(series: ChartSeries[], scale: string, resets: Char
     const path = sorted.map(([timestamp, value]) => `${x(timestamp).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
     return `<polyline points="${path}" fill="none" stroke="${PALETTE[index % PALETTE.length]}" stroke-width="2" stroke-linejoin="round" />`;
   }).join("");
+  const averagePaceLines = series.map((item, index) => {
+    const trend = cycleAverageTrend(item, byId.get(item.seriesId), now);
+    if (!trend) return "";
+    const end = visibleTrendEnd(trend, maxTime, minValue, maxValue);
+    if (end.time <= trend.observedAt) return "";
+    const depletes = trend.projectedValue <= 0 ? " average-pace-depleting" : "";
+    return `<line data-average-pace-to="${trend.resetsAt}" x1="${x(trend.observedAt).toFixed(1)}" y1="${y(trend.observedValue).toFixed(1)}" x2="${x(end.time).toFixed(1)}" y2="${y(end.value).toFixed(1)}" class="average-pace${depletes}" stroke="${PALETTE[index % PALETTE.length]}" />`;
+  }).join("");
   const timeLabels = `<text x="${padding.left}" y="${height - 8}" class="axis-label">${escapeHtml(formatAxisTime(minTime))}</text>
     <text x="${plotRight}" y="${height - 8}" text-anchor="end" class="axis-label">${escapeHtml(formatAxisTime(maxTime))}</text>`;
-  const description = series.map((item) => `${seriesLabel(item)}: ${resetDescription(byId.get(item.seriesId), now)}`).join(". ");
-  return `<svg class="usage-chart" role="img" aria-label="Usage history and reported next resets" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
-    <title>Usage history and reported next resets</title><desc>${escapeHtml(description)}</desc>
-    ${future}${grid}${resetLines}${polylines}${resetLabels}${timeLabels}
+  const description = series.map((item) => {
+    const trend = cycleAverageTrend(item, byId.get(item.seriesId), now);
+    const pace = !trend
+      ? ""
+      : trend.projectedValue <= 0
+      ? "; average pace reaches zero by the next reset"
+      : `; average pace projects ${formatNumber(trend.projectedValue)}% remaining at the next reset`;
+    return `${seriesLabel(item)}: ${resetDescription(byId.get(item.seriesId), now)}${pace}`;
+  }).join(". ");
+  return `<svg class="usage-chart" role="img" aria-label="Usage history, resets, and current-cycle average pace" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+    <title>Usage history, resets, and current-cycle average pace</title><desc>${escapeHtml(description)}</desc>
+    ${future}${grid}${previousResetLines}${resetLines}${polylines}${averagePaceLines}${resetLabels}${timeLabels}
   </svg>`;
 }
 
