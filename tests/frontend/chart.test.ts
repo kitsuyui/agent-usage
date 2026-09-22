@@ -115,6 +115,24 @@ describe("chart reset annotations", () => {
     expect(buildLegend([series()], resets, NOW)).toContain("in 30d 0m");
   });
 
+  test("caps a weekly chart at a selected short range", () => {
+    const weekly = series({
+      seriesId: "weekly",
+      window: "week",
+      windowSeconds: 7 * 24 * 60 * 60,
+      points: [[NOW - 20 * HOUR, 100], [NOW - HOUR, 80]],
+    });
+    const resets = [reset("weekly", NOW + 6 * 24 * HOUR)];
+    const rangeSeconds = 15 * 60 * 60;
+    const domain = chartTimeDomain([weekly], resets, NOW, weekly.windowSeconds, rangeSeconds);
+    expect(domain).toEqual({ min: NOW - 10 * HOUR, max: NOW + 5 * HOUR });
+
+    const svg = buildChartSvg([weekly], "remaining-percent", resets, NOW, weekly.windowSeconds, rangeSeconds);
+    const polyline = svg.match(/<polyline points="([^"]*)"/)![1]!;
+    expect(polyline.split(" ")).toHaveLength(1);
+    expect(svg).toContain("beyond the visible time axis");
+  });
+
   test("joins current resets by exact series identity, not the displayed window name", () => {
     const other = series({ seriesId: "different-duration", points: [[NOW - 2 * HOUR, 30]] });
     const resets = [reset("different-duration", NOW + HOUR)];

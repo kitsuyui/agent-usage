@@ -229,7 +229,13 @@ export function chartTimeDomain(
   resets: ChartReset[],
   now: number,
   cycleSeconds?: number | null,
+  rangeSeconds?: number,
 ): { min: number; max: number } {
+  if (rangeSeconds && rangeSeconds > 0) {
+    const durationMs = rangeSeconds * 1_000;
+    const pastMs = durationMs * 2 / 3;
+    return { min: now - pastMs, max: now + (durationMs - pastMs) };
+  }
   if (hasCurrentCycleContext(series, resets, now, cycleSeconds)) {
     const durationMs = cycleSeconds * 1_000;
     return { min: now - 2 * durationMs, max: now + durationMs };
@@ -252,11 +258,21 @@ export function buildChartSvg(
   resets: ChartReset[],
   now: number,
   cycleSeconds?: number | null,
+  rangeSeconds?: number,
 ): string {
-  const points = series.flatMap((item) => item.points);
+  const { min: minTime, max: maxTime } = chartTimeDomain(series, resets, now, cycleSeconds, rangeSeconds);
+  const visibleSeries = series
+    .map((item) => ({
+      ...item,
+      points: item.points.filter(([time]) => time >= minTime && time <= maxTime),
+    }))
+    .filter((item) => item.points.length > 0);
+  const points = visibleSeries.flatMap((item) => item.points);
   if (points.length === 0) return "";
   const byId = new Map(resets.map((reset) => [reset.seriesId, reset]));
-  const showCycleContext = hasCurrentCycleContext(series, resets, now, cycleSeconds);
+  const hasCycleContext = hasCurrentCycleContext(series, resets, now, cycleSeconds);
+  const showCycleContext = hasCycleContext &&
+    (!rangeSeconds || rangeSeconds >= (cycleSeconds! * 3));
   const upcoming = series.flatMap((item, index) => {
     const time = resetTime(byId.get(item.seriesId));
     return time !== null && time > now ? [{ item, index, time }] : [];
@@ -266,7 +282,6 @@ export function buildChartSvg(
   const plotHeight = 194;
   const height = padding.top + plotHeight + padding.bottom;
   const plotWidth = width - padding.left - padding.right;
-  const { min: minTime, max: maxTime } = chartTimeDomain(series, resets, now, cycleSeconds);
   const timeSpan = Math.max(1, maxTime - minTime);
   const values = points.map(([, value]) => value);
   const percentScale = scale === "remaining-percent";
@@ -285,7 +300,7 @@ export function buildChartSvg(
     `<line x1="${padding.left}" y1="${y(level)}" x2="${plotRight}" y2="${y(level)}" stroke="currentColor" stroke-opacity="0.15" />` +
     `<text x="${padding.left - 8}" y="${y(level) + 4}" text-anchor="end" class="axis-label">${escapeHtml(formatNumber(level))}</text>`,
   ).join("");
-  const future = !showCycleContext ? "" :
+  const future = maxTime <= now || upcoming.length === 0 ? "" :
     `<rect x="${x(now)}" y="${padding.top}" width="${plotRight - x(now)}" height="${plotHeight}" class="future-area" />` +
     `<line x1="${x(now)}" y1="${padding.top}" x2="${x(now)}" y2="${plotBottom}" class="now-line" />` +
     `<text x="${x(now)}" y="${padding.top - 10}" text-anchor="middle" class="axis-label">Now</text>`;
@@ -312,12 +327,12 @@ export function buildChartSvg(
       <text x="${labelX + 8}" y="${labelY + 14}" class="reset-label">${escapeHtml(text)}</text>
     </g>`;
   }).join("");
-  const polylines = series.map((item, index) => {
+  const polylines = visibleSeries.map((item, index) => {
     const sorted = [...item.points].sort(([left], [right]) => left - right);
     const path = sorted.map(([timestamp, value]) => `${x(timestamp).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
     return `<polyline points="${path}" fill="none" stroke="${PALETTE[index % PALETTE.length]}" stroke-width="2" stroke-linejoin="round" />`;
   }).join("");
-  const averagePaceLines = !showCycleContext ? "" : series.map((item, index) => {
+  const averagePaceLines = !showCycleContext ? "" : visibleSeries.map((item, index) => {
     const trend = cycleAverageTrend(item, byId.get(item.seriesId), now);
     if (!trend) return "";
     const end = visibleTrendEnd(trend, maxTime, minValue, maxValue);
