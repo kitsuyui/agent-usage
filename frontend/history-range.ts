@@ -19,22 +19,11 @@ export function normalizeHistoryRange(value: string | null): HistoryRange | null
   return LEGACY_HISTORY_RANGES[value] ?? null;
 }
 
-/**
- * Fetch enough history for the largest current cycle as well as the chosen
- * view. A weekly chart must retain its two-cycle context even when the user
- * has selected the short session view.
- */
-export function historyQueryRange(selected: HistoryRange, longestCycleSeconds: number | null): string {
-  const minimumSeconds = longestCycleSeconds && longestCycleSeconds > 0 ? longestCycleSeconds * 3 : 0;
-  const seconds = Math.max(HISTORY_RANGES[selected].seconds, minimumSeconds);
-  if (seconds % (24 * 60 * 60) === 0) return `${seconds / (24 * 60 * 60)}d`;
-  return `${seconds / (60 * 60)}h`;
+/** Keeps the API request bounded by the range selected in the dashboard. */
+export function historyQueryRange(selected: HistoryRange): string {
+  return selected;
 }
 
-export function cycleViewLabel(cycleSeconds: number | null): string {
-  if (!cycleSeconds || cycleSeconds <= 0) return "Observed history";
-  const seconds = cycleSeconds * 3;
-  return seconds % (24 * 60 * 60) === 0
-    ? `Three cycles (${seconds / (24 * 60 * 60)} days)`
-    : `Three cycles (${seconds / (60 * 60)} hours)`;
+export function historyRangeLabel(selected: HistoryRange): string {
+  return HISTORY_RANGES[selected].label;
 }

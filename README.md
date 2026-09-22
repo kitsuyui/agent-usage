@@ -33,11 +33,12 @@ provider computes `resetsAt` directly instead of parsing it — see
   `/api/usage/next-resets`) and an MCP server exposing the same data as tools,
   so both scripts and agents can read it.
 - A dependency-free static dashboard (plain HTML/CSS/TS, hand-rolled SVG
-  charts) served by the same HTTP server. It defaults to 14 days for trend
-  visibility and can switch to a focused 10-hour view or longer ranges. It
-  displays only the buckets in each provider's latest observation, so a quota
-  no longer reported by a provider stops being presented as current; its
-  history remains queryable through the API.
+  charts) served by the same HTTP server. It defaults to 21 days for trend
+  visibility and can switch to a focused 15-hour view or longer ranges. Each
+  chart stays within the selected view even when a provider also reports a
+  longer quota cycle. It displays only the buckets in each provider's latest
+  observation, so a quota no longer reported by a provider stops being
+  presented as current; its history remains queryable through the API.
 - Charts label each series' next reported reset with a matching color and
   number, its local date/time, and a countdown. Dashed markers place nearby
   resets on the time axis; an arrow identifies later resets without squeezing

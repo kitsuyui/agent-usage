@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  cycleViewLabel,
   historyQueryRange,
+  historyRangeLabel,
   normalizeHistoryRange,
   type HistoryRange,
 } from "../../frontend/history-range.ts";
@@ -16,7 +16,7 @@ describe("history range aliases", () => {
     ["90d", "90d"],
   ];
 
-  test.each(aliases)("maps %s to the cycle-context view %s", (input, expected) => {
+  test.each(aliases)("maps %s to the canonical view %s", (input, expected) => {
     expect(normalizeHistoryRange(input)).toBe(expected);
   });
 
@@ -24,13 +24,13 @@ describe("history range aliases", () => {
     expect(normalizeHistoryRange("14d-ish")).toBeNull();
   });
 
-  test("retains enough history for the longest current cycle", () => {
-    expect(historyQueryRange("15h", 7 * 24 * 60 * 60)).toBe("21d");
-    expect(historyQueryRange("21d", 5 * 60 * 60)).toBe("21d");
+  test("keeps the API request within the selected view", () => {
+    expect(historyQueryRange("15h")).toBe("15h");
+    expect(historyQueryRange("21d")).toBe("21d");
   });
 
-  test("labels each chart by its own three-cycle context", () => {
-    expect(cycleViewLabel(5 * 60 * 60)).toBe("Three cycles (15 hours)");
-    expect(cycleViewLabel(7 * 24 * 60 * 60)).toBe("Three cycles (21 days)");
+  test("labels each chart with the selected view", () => {
+    expect(historyRangeLabel("15h")).toBe("15 hours");
+    expect(historyRangeLabel("21d")).toBe("21 days");
   });
 });
