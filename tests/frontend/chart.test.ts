@@ -5,6 +5,7 @@ import {
   buildLegend,
   chartTimeDomain,
   cycleAverageTrend,
+  estimatedDepletionTime,
   groupChartSeries,
   type ChartReset,
   type ChartSeries,
@@ -89,6 +90,7 @@ describe("chart reset annotations", () => {
 
   test("does not estimate a pace until a prior reset boundary is observed", () => {
     expect(cycleAverageTrend(series(), reset("session", NOW + HOUR), NOW)).toBeNull();
+    expect(buildLegend([series()], [reset("session", NOW + HOUR)], NOW)).not.toContain("Est. 0%");
   });
 
   test("marks a pace that reaches zero before the next reset", () => {
@@ -100,7 +102,40 @@ describe("chart reset annotations", () => {
     };
     const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW, item.windowSeconds);
     expect(svg).toContain('class="average-pace average-pace-depleting"');
+    expect(svg).toContain("average pace estimates 0% at ");
     expect(svg).not.toMatch(/NaN|Infinity/);
+    const legend = buildLegend([item], [cycle], NOW);
+    expect(legend).toContain('datetime="2026-09-10T00:15:00.000Z"');
+    expect(legend).toContain("Est. 0% · ");
+  });
+
+  test("only shows a future 0% estimate within the current reset cycle", () => {
+    const base = {
+      firstObservedAt: NOW - 2 * HOUR,
+      firstValue: 80,
+      observedAt: NOW - HOUR,
+      observedValue: 40,
+      resetsAt: NOW + 2 * HOUR,
+      ratePerMs: -20 / HOUR,
+      projectedValue: -20,
+    };
+    expect(estimatedDepletionTime(base, NOW)).toBe(NOW + HOUR);
+    expect(estimatedDepletionTime(base, NOW - HOUR)).toBe(NOW + HOUR);
+    expect(estimatedDepletionTime({ ...base, ratePerMs: 0 }, NOW)).toBeNull();
+    expect(estimatedDepletionTime({ ...base, observedValue: 0 }, NOW)).toBeNull();
+    expect(estimatedDepletionTime({ ...base, observedAt: NOW, resetsAt: NOW + 2 * HOUR }, NOW)).toBeNull();
+    expect(estimatedDepletionTime({ ...base, ratePerMs: -10 / HOUR }, NOW)).toBeNull();
+    expect(estimatedDepletionTime({ ...base, ratePerMs: -60 / HOUR }, NOW)).toBeNull();
+  });
+
+  test("a pace that stays above 0% until reset has no depletion date", () => {
+    const item = series({ points: [[NOW - 6 * HOUR, 100], [NOW - HOUR, 80]] });
+    const cycle = {
+      seriesId: "session",
+      previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
+      resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
+    };
+    expect(buildLegend([item], [cycle], NOW)).not.toContain("Est. 0%");
   });
 
   test("a future reset never changes the fixed cycle viewport", () => {

@@ -163,6 +163,13 @@ export function cycleAverageTrend(
   };
 }
 
+/** The same current-cycle pace reaches zero only if it does so before the next reset. */
+export function estimatedDepletionTime(trend: CycleAverageTrend, now: number): number | null {
+  if (trend.ratePerMs >= 0 || trend.observedValue <= 0) return null;
+  const time = trend.observedAt - trend.observedValue / trend.ratePerMs;
+  return Number.isFinite(time) && time > now && time < trend.resetsAt ? time : null;
+}
+
 function trendValueAt(trend: CycleAverageTrend, time: number): number {
   return trend.observedValue + trend.ratePerMs * (time - trend.observedAt);
 }
@@ -344,8 +351,11 @@ export function buildChartSvg(
     <text x="${plotRight}" y="${height - 8}" text-anchor="end" class="axis-label">${escapeHtml(formatAxisTime(maxTime))}</text>`;
   const description = series.map((item) => {
     const trend = cycleAverageTrend(item, byId.get(item.seriesId), now);
+    const depletionTime = trend ? estimatedDepletionTime(trend, now) : null;
     const pace = !trend
       ? ""
+      : depletionTime !== null
+      ? `; average pace estimates 0% at ${absoluteResetTime(depletionTime)}`
       : trend.projectedValue <= 0
       ? "; average pace reaches zero by the next reset"
       : `; average pace projects ${formatNumber(trend.projectedValue)}% remaining at the next reset`;
@@ -363,9 +373,13 @@ export function buildLegend(series: ChartSeries[], resets: ChartReset[], now: nu
     const reset = byId.get(item.seriesId);
     const time = resetTime(reset);
     const detail = escapeHtml(resetDescription(reset, now));
+    const trend = cycleAverageTrend(item, reset, now);
+    const depletionTime = trend ? estimatedDepletionTime(trend, now) : null;
+    const depletion = depletionTime === null ? "" :
+      `<time class="depletion-detail" datetime="${new Date(depletionTime).toISOString()}">Est. 0% · ${escapeHtml(absoluteResetTime(depletionTime))}</time>`;
     return `<div class="legend-item" role="listitem">
       <span class="legend-series"><span class="swatch" style="background:${PALETTE[index % PALETTE.length]}" aria-hidden="true">${index + 1}</span>${escapeHtml(seriesLabel(item))}</span>
-      <span class="reset-detail${time !== null && time > now ? " reset-upcoming" : ""}">${detail}</span>
+      <span class="reset-detail${time !== null && time > now ? " reset-upcoming" : ""}">${detail}${depletion}</span>
     </div>`;
   }).join("");
 }
