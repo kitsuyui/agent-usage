@@ -243,8 +243,8 @@ function renderCharts(
                 return `<section class="chart-group">
                   <div class="chart-heading"><span>${escapeHtml(scaleLabel(group.series[0]!, group.scale))}</span><span>${escapeHtml(rangeLabel)}</span></div>
                   <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group.series[0]!, group.scale))} history, reset times, and average pace">${svg}</div>
-                  <p class="chart-hint">Charts are bounded to the selected history range. Dashed vertical lines mark next resets; faint dotted lines mark prior observed resets. Dotted lines extend the current-cycle average pace when the selected range includes a complete cycle view.</p>
                   <div class="chart-legend" role="list">${buildLegend(group.series, resets, now)}</div>
+                  <p class="chart-hint">Charts are bounded to the selected history range. Dashed vertical lines mark next resets; faint dotted lines mark prior observed resets. Dotted lines extend the current-cycle average pace when the selected range includes a complete cycle view.</p>
                 </section>`;
               })
               .join("");

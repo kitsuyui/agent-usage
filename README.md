@@ -45,7 +45,9 @@ provider computes `resetsAt` directly instead of parsing it — see
   the usage history. Unknown or expired reset times remain explicit.
 - For percentage quotas with an observed prior reset boundary, charts also
   extend one dotted, current-cycle average pace line toward the next reset.
-  No pace line is invented until the cycle boundary is known.
+  The legend shows a future estimated local 0% date and time when that pace would
+  exhaust the quota before reset. No pace line is invented until the cycle
+  boundary is known.
 - New providers are a config object + a parser function away — see
   [`docs/providers.md`](docs/providers.md).
 
