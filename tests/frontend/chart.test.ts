@@ -36,6 +36,21 @@ describe("chart reset annotations", () => {
     ]);
   });
 
+  test("keeps the last successful series visible after a failed capture", () => {
+    const retired = series({ seriesId: "retired", points: [[NOW - 2 * HOUR, 70]] });
+    const current = series({ seriesId: "current", points: [[NOW - 2 * HOUR, 80], [NOW - HOUR, 45]] });
+    const lastSuccessfulAt = new Date(NOW - HOUR).toISOString();
+    const visible = activeChartSeries([retired, current], [reset("another-provider", NOW + HOUR)], lastSuccessfulAt);
+
+    expect(visible).toEqual([current]);
+    expect(buildChartSvg(visible, "remaining-percent", [], NOW)).toContain("<polyline");
+  });
+
+  test("does not revive an old series when the last success is outside the selected range", () => {
+    const old = series({ points: [[NOW - 20 * HOUR, 80]] });
+    expect(activeChartSeries([old], [], new Date(NOW - HOUR).toISOString())).toEqual([]);
+  });
+
   test("uses two past cycles and one future cycle for a known reset duration", () => {
     const resets = [reset("session", NOW + 2 * HOUR)];
     const item = series();

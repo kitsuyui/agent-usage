@@ -46,12 +46,21 @@ export interface ChartGroup {
 }
 
 /**
- * Keeps the dashboard focused on buckets in the latest provider observation.
- * Historical series remain available from the API, but a removed or replaced
- * provider bucket must not look like a current limit merely because it has
- * observations inside the selected history range.
+ * Keeps the dashboard focused on buckets in the latest successful observation.
+ * A failed capture has no current windows, but its prior chart data remains
+ * available. Match the last successful timestamp so retired buckets stay hidden.
  */
-export function activeChartSeries(series: ChartSeries[], currentWindows: ChartReset[]): ChartSeries[] {
+export function activeChartSeries(
+  series: ChartSeries[],
+  currentWindows: ChartReset[],
+  lastSuccessfulAt: string | null = null,
+): ChartSeries[] {
+  if (lastSuccessfulAt !== null) {
+    const lastSuccessfulTime = Date.parse(lastSuccessfulAt);
+    return Number.isFinite(lastSuccessfulTime)
+      ? series.filter((item) => item.points.at(-1)?.[0] === lastSuccessfulTime)
+      : [];
+  }
   const currentIds = new Set(currentWindows.map((window) => window.seriesId));
   return series.filter((item) => currentIds.has(item.seriesId));
 }

@@ -96,7 +96,7 @@ async function refresh(): Promise<void> {
       fetchJson<NextReset[]>("/api/usage/next-resets"),
     ]);
     renderCollectors(collectorsEl, providers);
-    renderResets(resetsEl, resets);
+    renderResets(resetsEl, resets, providers);
 
     const withData = providers.filter((provider) => provider.hasData);
     if (renderedRange !== selectedRange || chartsEl.children.length === 0) {
@@ -180,9 +180,12 @@ async function fetchJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-function renderResets(container: HTMLElement, resets: NextReset[]): void {
+function renderResets(container: HTMLElement, resets: NextReset[], providers: ProviderInfo[]): void {
   if (resets.length === 0) {
-    container.innerHTML = card("Current limits", '<p class="empty-state">No data recorded yet.</p>');
+    const message = providers.some((provider) => provider.hasData)
+      ? "Current limits are unavailable. Earlier samples remain available in the history charts."
+      : "No data recorded yet.";
+    container.innerHTML = card("Current limits", `<p class="empty-state">${message}</p>`);
     return;
   }
   const rows = resets
@@ -223,8 +226,12 @@ function renderCharts(
   }
   container.innerHTML = withData
     .map((provider) => {
-      const series = activeChartSeries(chartsByProvider.get(provider.id) ?? [], resets);
+      const lastSuccessfulAt = provider.latestOk === false ? provider.lastSuccessAt : null;
+      const series = activeChartSeries(chartsByProvider.get(provider.id) ?? [], resets, lastSuccessfulAt);
       const groups = groupChartSeries(series);
+      const collectionNote = provider.latestOk === false && provider.lastSuccessAt
+        ? `<p class="chart-hint">Collection is failing. History is shown through ${escapeHtml(formatTimestamp(provider.lastSuccessAt))}.</p>`
+        : "";
       const body =
         errorsByProvider.has(provider.id)
           ? '<p class="empty-state">Chart data could not be loaded.</p>'
@@ -248,7 +255,7 @@ function renderCharts(
                 </section>`;
               })
               .join("");
-      return card(provider.displayName, body);
+      return card(provider.displayName, collectionNote + body);
     })
     .join("");
 }
