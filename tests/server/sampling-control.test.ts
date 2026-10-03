@@ -38,6 +38,7 @@ function write(path: string, method: string, body: unknown, extra: Record<string
 
 describe("sampling control API and remote collectors", () => {
   test("persists live settings across server and database client restarts", async () => {
+    expect(await (await fetch(`${url}/api/sampling`)).json()).toMatchObject({ controlTokenRequired: true });
     expect((await createRemoteControlReader(url)()).intervalSeconds).toBe(900);
     const response = await write("/api/sampling", "PUT", { intervalSeconds: 300 });
     expect(response.status).toBe(200);
@@ -82,6 +83,8 @@ describe("sampling control API and remote collectors", () => {
   test("works without a control token on a trusted same-origin server", async () => {
     const local = createHttpServer({ db, port: 0, samplingControl: createSamplingControl(db, 900) });
     try {
+      const settings = await fetch(`http://127.0.0.1:${local.port}/api/sampling`);
+      expect(await settings.json()).toMatchObject({ controlTokenRequired: false });
       const endpoint = `http://127.0.0.1:${local.port}/api/sampling/refresh`;
       expect((await fetch(endpoint, { method: "POST", headers: {
         "content-type": "application/json", origin: new URL(endpoint).origin,

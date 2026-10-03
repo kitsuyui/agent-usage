@@ -112,7 +112,8 @@ The dashboard refreshes this table every minute.
 
 ## Live sampling controls
 
-The dashboard includes **Collect now** and **Save interval** controls. They apply
+Open the gear button beside **Collector status** to access **Collect now** and
+**Save interval**. Settings are collapsed by default. These controls apply
 across all collectors connected to this server, without restarting them. The
 collection interval is separate from the dashboard's one-minute display refresh.
 
@@ -149,8 +150,11 @@ All writes require `Content-Type: application/json`. Browser writes must be from
 the same origin. Set `SAMPLING_CONTROL_TOKEN` on the server to additionally
 require `Authorization: Bearer <token>` for these two write endpoints. This is
 separate from `INGEST_TOKEN`; collectors do not need operator credentials. The
-dashboard accepts the operator token in a password field and keeps it only in
-memory. Without a token, use a trusted network or an authenticated reverse proxy.
+dashboard shows a password field only when the server requires this optional
+token, and keeps the entered value only in memory. By default no token or token
+entry is required. Without a token, use a trusted network or an authenticated
+reverse proxy. `GET /api/sampling` includes `controlTokenRequired` so clients can
+show authentication controls only when needed.
 
 On the first upgrade, regenerate the Prisma client, apply database migrations,
 rebuild the frontend, and update/restart the server **and collectors** once.

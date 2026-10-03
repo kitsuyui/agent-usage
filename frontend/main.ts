@@ -89,7 +89,7 @@ async function main(): Promise<void> {
 async function refresh(): Promise<void> {
   const resetsEl = document.getElementById("resets");
   const chartsEl = document.getElementById("charts");
-  const collectorsEl = document.getElementById("collectors");
+  const collectorsEl = document.getElementById("collector-status-table");
   if (!resetsEl || !chartsEl || !collectorsEl) return;
 
   try {
@@ -159,13 +159,10 @@ function renderCollectors(container: HTMLElement, providers: ProviderInfo[]): vo
       </tr>`,
     )
     .join("");
-  container.innerHTML = card(
-    "Collector status",
-    `<div class="table-scroll"><table>
+  container.innerHTML = `<div class="table-scroll"><table>
       <thead><tr><th>Provider</th><th>Status</th><th>CLI version</th><th>Last attempt</th><th>Last success</th><th>Failures</th><th>Error</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table></div>`,
-  );
+    </table></div>`;
 }
 
 function statusLabel(status: ProviderInfo["status"]): string {
@@ -327,6 +324,7 @@ void main();
 interface SamplingSettings {
   intervalSeconds: number;
   refreshRequestedAt: string | null;
+  controlTokenRequired?: boolean;
 }
 
 async function refreshSamplingSettings(): Promise<void> {
@@ -335,13 +333,22 @@ async function refreshSamplingSettings(): Promise<void> {
   try {
     const settings = await fetchJson<SamplingSettings>("/api/sampling");
     input.value = String(settings.intervalSeconds / 60);
-    status.textContent = `Collection interval: ${settings.intervalSeconds / 60} minutes. Settings survive restarts.`;
+    document.getElementById("sampling-token-field")!.hidden = !settings.controlTokenRequired;
+    status.textContent = `Collection interval: ${settings.intervalSeconds / 60} minutes. Settings survive restarts.`
+      + (settings.controlTokenRequired ? " This server requires a control token to make changes." : "");
   } catch {
     status.textContent = "Sampling controls are unavailable. The server and collectors may need an update.";
   }
 }
 
 function setupSamplingControls(): void {
+  const toggle = document.getElementById("sampling-toggle") as HTMLButtonElement;
+  const panel = document.getElementById("sampling-settings")!;
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+    if (!panel.hidden) void refreshSamplingSettings();
+  });
   const form = document.getElementById("sampling-form") as HTMLFormElement;
   const refreshButton = document.getElementById("sampling-refresh") as HTMLButtonElement;
   const status = document.getElementById("sampling-status")!;
@@ -357,6 +364,10 @@ function setupSamplingControls(): void {
         body: JSON.stringify(refreshNow ? {} : { intervalSeconds: Math.round(minutes * 60) }),
       });
       const result = await response.json() as SamplingSettings & { error?: string };
+      if (response.status === 401) {
+        document.getElementById("sampling-token-field")!.hidden = false;
+        throw new Error("This server requires a valid control token.");
+      }
       if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
       status.textContent = refreshNow
         ? "Collection requested. Online collectors check within 5 seconds; an active capture finishes first. Results update every minute."

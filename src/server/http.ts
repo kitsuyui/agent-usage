@@ -91,7 +91,9 @@ async function samplingRequest(
   request: Request, url: URL, control: SamplingControl | undefined, token: string | undefined,
 ): Promise<Response> {
   if (!control) return json({ error: "sampling control unavailable" }, 503);
-  if (url.pathname === "/api/sampling" && request.method === "GET") return json(await control.read());
+  if (url.pathname === "/api/sampling" && request.method === "GET") {
+    return json({ ...await control.read(), controlTokenRequired: Boolean(token) });
+  }
   const isRefresh = url.pathname === "/api/sampling/refresh";
   if (request.method !== (isRefresh ? "POST" : "PUT")) {
     return json({ error: "method not allowed" }, 405);
