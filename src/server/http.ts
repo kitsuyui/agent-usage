@@ -1,3 +1,5 @@
+import { samplingIntervalSchema, type SamplingControl } from "../daemon/sampling-control.ts";
+import { z } from "zod";
 import { join, normalize } from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import { toUsageSnapshot, usageSnapshotSchema } from "../domain/snapshot-schema.ts";
@@ -34,20 +36,27 @@ export interface HttpServerOptions {
   ingestToken?: string;
   /** A successful collector becomes stale after this many seconds. */
   staleAfterSeconds?: number;
+  samplingControl?: SamplingControl;
+  controlToken?: string;
 }
 
 /** Starts the HTTP API (and static frontend) server. */
 export function createHttpServer(options: HttpServerOptions) {
-  const { db, port, ingestToken, staleAfterSeconds } = options;
+  const { db, port, ingestToken, staleAfterSeconds, samplingControl, controlToken } = options;
   return Bun.serve({
     hostname: resolveHttpHost(options.host),
     port,
     async fetch(request) {
       const url = new URL(request.url);
       try {
+        if (url.pathname === "/api/sampling" || url.pathname === "/api/sampling/refresh") {
+          return await samplingRequest(request, url, samplingControl, controlToken);
+        }
         if (url.pathname === "/health") return json({ status: "ok" });
         if (url.pathname === "/api/providers") {
-          return json(await providersPayload(db, staleAfterSeconds));
+          const threshold = samplingControl
+            ? (await samplingControl.read()).intervalSeconds * 2 + 60 : staleAfterSeconds;
+          return json(await providersPayload(db, threshold));
         }
         if (url.pathname === "/api/usage/latest") {
           return json(await latestPayload(db, url.searchParams.get("provider")));
@@ -76,6 +85,40 @@ export function createHttpServer(options: HttpServerOptions) {
       }
     },
   });
+}
+
+async function samplingRequest(
+  request: Request, url: URL, control: SamplingControl | undefined, token: string | undefined,
+): Promise<Response> {
+  if (!control) return json({ error: "sampling control unavailable" }, 503);
+  if (url.pathname === "/api/sampling" && request.method === "GET") {
+    return json({ ...await control.read(), controlTokenRequired: Boolean(token) });
+  }
+  const isRefresh = url.pathname === "/api/sampling/refresh";
+  if (request.method !== (isRefresh ? "POST" : "PUT")) {
+    return json({ error: "method not allowed" }, 405);
+  }
+  if (token && request.headers.get("authorization") !== `Bearer ${token}`) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  // Reject browser cross-site writes even when control authentication is unset.
+  // Requiring JSON also excludes form submissions and simple cross-origin requests.
+  const origin = request.headers.get("origin");
+  if ((origin !== null && origin !== url.origin) || request.headers.get("sec-fetch-site") === "cross-site") {
+    return json({ error: "cross-origin sampling control is forbidden" }, 403);
+  }
+  if (request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") {
+    return json({ error: "application/json is required" }, 415);
+  }
+  const body: unknown = await request.json().catch(() => undefined);
+  if (isRefresh) {
+    const parsed = z.object({}).strict().safeParse(body);
+    if (!parsed.success) return json({ error: "invalid sampling request", details: parsed.error.flatten() }, 400);
+    return json(await control.requestRefresh(), 202);
+  }
+  const parsed = z.object({ intervalSeconds: samplingIntervalSchema }).strict().safeParse(body);
+  if (!parsed.success) return json({ error: "invalid sampling request", details: parsed.error.flatten() }, 400);
+  return json(await control.setInterval(parsed.data.intervalSeconds));
 }
 
 export function resolveHttpHost(value: string | undefined): string {
@@ -196,5 +239,5 @@ async function serveStatic(pathname: string): Promise<Response> {
 }
 
 function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 }

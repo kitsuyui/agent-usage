@@ -110,6 +110,58 @@ responses, so clients can match current resets to the correct usage series.
 times, consecutive failures, the latest stable `errorCode`, and `cliVersion`.
 The dashboard refreshes this table every minute.
 
+## Live sampling controls
+
+Open the gear button beside **Collector status** to access **Collect now** and
+**Save interval**. Settings are collapsed by default. These controls apply
+across all collectors connected to this server, without restarting them. The
+collection interval is separate from the dashboard's one-minute display refresh.
+
+| Method | Endpoint | JSON body | Result |
+| --- | --- | --- | --- |
+| GET | `/api/sampling` | — | Shared interval and latest refresh request |
+| PUT | `/api/sampling` | `{"intervalSeconds":300}` | Save a five-minute interval |
+| POST | `/api/sampling/refresh` | `{}` | Request one additional collection pass (202 Accepted) |
+
+Intervals must be whole seconds between 60 and 86400. The server stores the
+configuration in SQLite. `SAMPLE_INTERVAL_SECONDS` seeds it only when no stored
+configuration exists; later environment changes do not override saved settings.
+Standalone collectors use the server's interval, overriding their startup default.
+
+Collectors check settings with at most five seconds of idle waiting between
+checks (plus request latency), and immediately after each capture pass. An active
+capture finishes before a command takes effect; captures within a collector never
+overlap. Several refresh requests before the next check coalesce into one pass.
+An interval change restarts the idle wait using the new interval, while an
+already-due capture remains due. Ordinary periods are measured from completion
+of a capture pass, so actual observation spacing also includes capture time.
+
+A refresh response means the request was **accepted**, not that capture succeeded
+or that every collector is online. Inspect `/api/providers` and observation
+timestamps to verify new results. Collectors always sample once on startup. When
+the first settings check succeeds, they do not replay the stored refresh request
+as an additional startup pass. If the control endpoint cannot be reached, they
+retain their last applied interval and continue attempting capture; manual
+requests wait until connectivity returns. When the initial settings check fails,
+the first reconnection may perform one extra pass for a stored request, preferring
+an extra observation to losing a command received while disconnected.
+
+All writes require `Content-Type: application/json`. Browser writes must be from
+the same origin. Set `SAMPLING_CONTROL_TOKEN` on the server to additionally
+require `Authorization: Bearer <token>` for these two write endpoints. This is
+separate from `INGEST_TOKEN`; collectors do not need operator credentials. The
+dashboard shows a password field only when the server requires this optional
+token, and keeps the entered value only in memory. By default no token or token
+entry is required. Without a token, use a trusted network or an authenticated
+reverse proxy. `GET /api/sampling` includes `controlTokenRequired` so clients can
+show authentication controls only when needed.
+
+On the first upgrade, regenerate the Prisma client, apply database migrations,
+rebuild the frontend, and update/restart the server **and collectors** once.
+Subsequent interval changes and refresh requests need no restart. Back up the
+server database before migration. The migration adds one control table and
+preserves existing history. Older collectors do not support these commands.
+
 ## Deployment modes
 
 By default `daemon` is all-in-one: local SQLite database + HTTP API/dashboard

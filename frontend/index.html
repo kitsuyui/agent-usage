@@ -22,7 +22,28 @@
           </select>
         </label>
       </header>
-      <section id="collectors" aria-label="Collector status"></section>
+      <section id="collectors" class="card" aria-labelledby="collector-title">
+        <div class="collector-heading">
+          <h2 id="collector-title">Collector status</h2>
+          <button id="sampling-toggle" class="settings-button" type="button"
+            aria-label="Collection settings" aria-expanded="false" aria-controls="sampling-settings"
+            title="Collection settings"><span aria-hidden="true">&#9881;</span></button>
+        </div>
+        <div id="sampling-settings" hidden>
+          <form id="sampling-form">
+            <label>Collection interval (minutes)
+              <input id="sampling-minutes" type="number" min="1" max="1440" step="any" required value="15" />
+            </label>
+            <button type="submit">Save interval</button>
+            <button id="sampling-refresh" type="button">Collect now</button>
+            <label id="sampling-token-field" hidden>Control token
+              <input id="sampling-token" type="password" autocomplete="off" />
+            </label>
+          </form>
+          <p id="sampling-status" role="status" aria-live="polite"></p>
+        </div>
+        <div id="collector-status-table"></div>
+      </section>
       <section id="resets" aria-label="Next reset times"></section>
       <section id="charts" aria-label="Usage history charts"></section>
     </main>

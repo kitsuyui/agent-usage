@@ -80,3 +80,11 @@ model Window {
   @@index([provider, observedAt])
   @@index([sampleId])
 }
+
+// Singleton shared by the API server and its local/remote collectors.
+model SamplingControl {
+  id String @id
+  intervalSeconds Int
+  refreshRequestId String?
+  refreshRequestedAt DateTime?
+}

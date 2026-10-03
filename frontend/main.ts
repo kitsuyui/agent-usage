@@ -80,6 +80,8 @@ async function main(): Promise<void> {
       void refresh();
     });
   }
+  setupSamplingControls();
+  await refreshSamplingSettings();
   await refresh();
   setInterval(() => void refresh(), REFRESH_MS);
 }
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
 async function refresh(): Promise<void> {
   const resetsEl = document.getElementById("resets");
   const chartsEl = document.getElementById("charts");
-  const collectorsEl = document.getElementById("collectors");
+  const collectorsEl = document.getElementById("collector-status-table");
   if (!resetsEl || !chartsEl || !collectorsEl) return;
 
   try {
@@ -157,13 +159,10 @@ function renderCollectors(container: HTMLElement, providers: ProviderInfo[]): vo
       </tr>`,
     )
     .join("");
-  container.innerHTML = card(
-    "Collector status",
-    `<div class="table-scroll"><table>
+  container.innerHTML = `<div class="table-scroll"><table>
       <thead><tr><th>Provider</th><th>Status</th><th>CLI version</th><th>Last attempt</th><th>Last success</th><th>Failures</th><th>Error</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table></div>`,
-  );
+    </table></div>`;
 }
 
 function statusLabel(status: ProviderInfo["status"]): string {
@@ -321,3 +320,64 @@ function initialRange(): HistoryRange {
 }
 
 void main();
+
+interface SamplingSettings {
+  intervalSeconds: number;
+  refreshRequestedAt: string | null;
+  controlTokenRequired?: boolean;
+}
+
+async function refreshSamplingSettings(): Promise<void> {
+  const input = document.getElementById("sampling-minutes") as HTMLInputElement;
+  const status = document.getElementById("sampling-status")!;
+  try {
+    const settings = await fetchJson<SamplingSettings>("/api/sampling");
+    input.value = String(settings.intervalSeconds / 60);
+    document.getElementById("sampling-token-field")!.hidden = !settings.controlTokenRequired;
+    status.textContent = `Collection interval: ${settings.intervalSeconds / 60} minutes. Settings survive restarts.`
+      + (settings.controlTokenRequired ? " This server requires a control token to make changes." : "");
+  } catch {
+    status.textContent = "Sampling controls are unavailable. The server and collectors may need an update.";
+  }
+}
+
+function setupSamplingControls(): void {
+  const toggle = document.getElementById("sampling-toggle") as HTMLButtonElement;
+  const panel = document.getElementById("sampling-settings")!;
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+    if (!panel.hidden) void refreshSamplingSettings();
+  });
+  const form = document.getElementById("sampling-form") as HTMLFormElement;
+  const refreshButton = document.getElementById("sampling-refresh") as HTMLButtonElement;
+  const status = document.getElementById("sampling-status")!;
+  const submit = async (refreshNow: boolean): Promise<void> => {
+    const buttons = form.querySelectorAll("button");
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const token = (document.getElementById("sampling-token") as HTMLInputElement).value;
+      const minutes = Number((document.getElementById("sampling-minutes") as HTMLInputElement).value);
+      const response = await fetch(refreshNow ? "/api/sampling/refresh" : "/api/sampling", {
+        method: refreshNow ? "POST" : "PUT",
+        headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(refreshNow ? {} : { intervalSeconds: Math.round(minutes * 60) }),
+      });
+      const result = await response.json() as SamplingSettings & { error?: string };
+      if (response.status === 401) {
+        document.getElementById("sampling-token-field")!.hidden = false;
+        throw new Error("This server requires a valid control token.");
+      }
+      if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+      status.textContent = refreshNow
+        ? "Collection requested. Online collectors check within 5 seconds; an active capture finishes first. Results update every minute."
+        : `Saved: collect every ${result.intervalSeconds / 60} minutes. Online collectors apply changes within 5 seconds after any active capture.`;
+    } catch (error) {
+      status.textContent = `Sampling control failed: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
+    }
+  };
+  form.addEventListener("submit", (event) => { event.preventDefault(); void submit(false); });
+  refreshButton.addEventListener("click", () => { void submit(true); });
+}
