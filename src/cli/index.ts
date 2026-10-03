@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import type { PrismaClient } from "@prisma/client";
+import { createSamplingControl, createRemoteControlReader } from "../daemon/sampling-control.ts";
 import { runDaemon } from "../daemon/index.ts";
 import { createRemoteSink } from "../daemon/remote-sink.ts";
 import { runSampleOnce } from "../daemon/sampler.ts";
@@ -45,6 +46,9 @@ async function daemonCommand(args: string[]): Promise<void> {
   const { sink, db } = resolveSink();
   await runDaemon({
     sink,
+    readSamplingConfig: db
+      ? createSamplingControl(db, Number(process.env.SAMPLE_INTERVAL_SECONDS ?? 900)).read
+      : createRemoteControlReader(process.env.INGEST_SERVER_URL!),
     ...(providerId ? { providerId } : {}),
     // A standalone collector (INGEST_SERVER_URL set) has no local database,
     // so it serves no HTTP API of its own — it only captures and pushes out.
@@ -86,6 +90,8 @@ function resolveHttpOptions(db: PrismaClient): {
   port: number;
   ingestToken?: string;
   staleAfterSeconds?: number;
+  samplingControl: ReturnType<typeof createSamplingControl>;
+  controlToken?: string;
 } {
   const intervalSeconds = Number(process.env.SAMPLE_INTERVAL_SECONDS ?? 900);
   return {
@@ -93,6 +99,8 @@ function resolveHttpOptions(db: PrismaClient): {
     host: resolveHttpHost(process.env.HTTP_HOST),
     port: Number(process.env.HTTP_PORT ?? DEFAULT_HTTP_PORT),
     staleAfterSeconds: intervalSeconds * 2 + 60,
+    samplingControl: createSamplingControl(db, intervalSeconds),
+    ...(process.env.SAMPLING_CONTROL_TOKEN ? { controlToken: process.env.SAMPLING_CONTROL_TOKEN } : {}),
     ...(process.env.INGEST_TOKEN ? { ingestToken: process.env.INGEST_TOKEN } : {}),
   };
 }

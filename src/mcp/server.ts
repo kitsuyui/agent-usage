@@ -27,12 +27,14 @@ export function createMcpServer(db: PrismaClient, staleAfterSeconds?: number): M
     },
     async () => {
       const withData = new Set(await distinctProviders(db));
+      const control = await db.samplingControl.findUnique({ where: { id: "global" } });
+      const threshold = control ? control.intervalSeconds * 2 + 60 : staleAfterSeconds;
       return textResult(
         await Promise.all(listProviders().map(async (provider) => ({
           id: provider.id,
           displayName: provider.displayName,
           hasData: withData.has(provider.id),
-          ...(await providerHealth(db, provider.id, staleAfterSeconds)),
+          ...(await providerHealth(db, provider.id, threshold)),
         }))),
       );
     },

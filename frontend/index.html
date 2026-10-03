@@ -22,6 +22,19 @@
           </select>
         </label>
       </header>
+      <section aria-label="Sampling controls" class="sampling-controls">
+        <form id="sampling-form">
+          <label>Collection interval (minutes)
+            <input id="sampling-minutes" type="number" min="1" max="1440" step="any" required value="15" />
+          </label>
+          <label>Control token (if required)
+            <input id="sampling-token" type="password" autocomplete="off" />
+          </label>
+          <button type="submit">Save interval</button>
+          <button id="sampling-refresh" type="button">Collect now</button>
+        </form>
+        <p id="sampling-status" role="status" aria-live="polite"></p>
+      </section>
       <section id="collectors" aria-label="Collector status"></section>
       <section id="resets" aria-label="Next reset times"></section>
       <section id="charts" aria-label="Usage history charts"></section>

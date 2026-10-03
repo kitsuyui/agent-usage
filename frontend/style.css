@@ -321,3 +321,10 @@ svg.usage-chart {
     padding-left: 1.6rem;
   }
 }
+
+.sampling-controls { margin-bottom: 1.5rem; }
+#sampling-form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+#sampling-form label { display: grid; gap: .35rem; }
+#sampling-form input, #sampling-form button { font: inherit; padding: .4rem .6rem; }
+#sampling-minutes { width: 6rem; }
+#sampling-status { min-height: 1.5em; }
