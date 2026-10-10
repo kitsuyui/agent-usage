@@ -93,7 +93,58 @@ describe("parseCodexUsage", () => {
 
   test("keeps a reported zero reset-credit count", () => {
     const snapshot = parseCodexUsage(JSON.stringify({ rateLimitResetCredits: { availableCount: 0 } }), OBSERVED);
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.error).toBeUndefined();
+    expect(snapshot.windows).toEqual([]);
     expect(snapshot.resetCredits).toBe(0);
+    expect(snapshot.creditBalances).toEqual([
+      {
+        id: "manual-reset-credits",
+        kind: "manual_reset",
+        label: "Manual resets",
+        unit: "reset",
+        remaining: 0,
+        expiry: { kind: "unknown" },
+      },
+    ]);
+  });
+
+  test("accepts a credits-only structured observation", () => {
+    const snapshot = parseCodexUsage(JSON.stringify({
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: null,
+          secondary: null,
+          credits: { hasCredits: true, unlimited: false, balance: "4" },
+        },
+      },
+    }), OBSERVED);
+    expect(snapshot).toMatchObject({ ok: true, windows: [] });
+    expect(snapshot.error).toBeUndefined();
+    expect(snapshot.creditBalances).toEqual([
+      {
+        id: "limit-credits:codex",
+        kind: "credit",
+        label: "codex credits",
+        unit: "Credits",
+        remaining: 4,
+        expiry: { kind: "unknown" },
+      },
+    ]);
+  });
+
+  test("keeps empty or invalid structured observations failed", () => {
+    for (const response of [
+      {},
+      { rateLimitResetCredits: { availableCount: -1 } },
+      { rateLimits: { credits: { hasCredits: true, unlimited: false, balance: "not-a-number" } } },
+    ]) {
+      const snapshot = parseCodexUsage(JSON.stringify(response), OBSERVED);
+      expect(snapshot.ok).toBe(false);
+      expect(snapshot.creditBalances).toBeUndefined();
+      expect(snapshot.error).toBe("provider output contained no usage windows");
+    }
   });
 
   test("keeps available reset grants and metered credit balances without exposing grant identifiers", () => {
