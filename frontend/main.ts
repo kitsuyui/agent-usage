@@ -4,6 +4,8 @@
 import { activeChartSeries, buildChartSvg, buildLegend, groupChartSeries, type ChartSeries } from "./chart.ts";
 import { escapeHtml, formatNumber, scopeLabel } from "./format.ts";
 import { manualResetsLabel } from "./collector-status.ts";
+import { renderBalances, type BalanceObservation } from "./balances.ts";
+import type { CreditBalance } from "../src/domain/credit-balances.ts";
 import {
   HISTORY_RANGES,
   historyQueryRange,
@@ -26,6 +28,7 @@ interface ProviderInfo {
   error: string | null;
   cliVersion: string | null;
   resetCredits: number | null;
+  creditBalances: CreditBalance[] | null;
 }
 
 interface HistoryPoint {
@@ -68,6 +71,7 @@ const MAX_POINTS_PER_SERIES = 480;
 const HISTORY_LIMIT = 100_000;
 let selectedRange: HistoryRange = initialRange();
 let renderedRange: HistoryRange | null = null;
+let refreshVersion = 0;
 
 async function main(): Promise<void> {
   const rangeSelect = document.getElementById("history-range");
@@ -90,36 +94,56 @@ async function main(): Promise<void> {
 }
 
 async function refresh(): Promise<void> {
+  const version = ++refreshVersion;
+  const range = selectedRange;
   const resetsEl = document.getElementById("resets");
+  const balancesEl = document.getElementById("balances");
   const chartsEl = document.getElementById("charts");
   const collectorsEl = document.getElementById("collector-status-table");
-  if (!resetsEl || !chartsEl || !collectorsEl) return;
+  if (!resetsEl || !chartsEl || !collectorsEl || !balancesEl) return;
 
   try {
-    const [providers, resets] = await Promise.all([
+    const [providers, resets, sampling] = await Promise.all([
       fetchJson<ProviderInfo[]>("/api/providers"),
       fetchJson<NextReset[]>("/api/usage/next-resets"),
+      fetchJson<SamplingSettings>("/api/sampling").catch(() => null),
     ]);
+    if (version !== refreshVersion) return;
     renderCollectors(collectorsEl, providers);
     renderResets(resetsEl, resets, providers);
 
     const withData = providers.filter((provider) => provider.hasData);
-    if (renderedRange !== selectedRange || chartsEl.children.length === 0) {
+    if (renderedRange !== range || chartsEl.children.length === 0) {
       chartsEl.innerHTML = withData
         .map((provider) => card(provider.displayName, '<p class="empty-state">Loading chart data…</p>'))
         .join("");
     }
+    const balanceRequest = Promise.allSettled(providers.map(async (provider) => {
+      const query = new URLSearchParams({ provider: provider.id, range: historyQueryRange(range), limit: String(HISTORY_LIMIT) });
+      return [provider.id, await fetchJson<BalanceObservation[]>(`/api/usage/credit-balances/history?${query}`)] as const;
+    }));
     const chartResults = await Promise.allSettled(
       withData.map(async (provider) => {
         const query = new URLSearchParams({
           provider: provider.id,
-          range: historyQueryRange(selectedRange),
+          range: historyQueryRange(range),
           limit: String(HISTORY_LIMIT),
           maxPoints: String(MAX_POINTS_PER_SERIES),
         });
         return [provider.id, await fetchJson<ChartSeries[]>(`/api/usage/chart?${query}`)] as const;
       }),
     );
+    const balanceResults = await balanceRequest;
+    if (version !== refreshVersion) return;
+    const balancesByProvider = new Map<string, BalanceObservation[]>();
+    const balanceErrors = new Set<string>();
+    balanceResults.forEach((result, index) => {
+      if (result.status === "fulfilled") balancesByProvider.set(result.value[0], result.value[1]);
+      else balanceErrors.add(providers[index]!.id);
+    });
+    balancesEl.innerHTML = renderBalances(providers.map((provider) => ({
+      ...provider, ...(sampling ? { sampleIntervalSeconds: sampling.intervalSeconds } : {}),
+    })), balancesByProvider, balanceErrors, Date.now(), HISTORY_RANGES[range].seconds, historyRangeLabel(range));
     const chartsByProvider = new Map<string, ChartSeries[]>();
     const errorsByProvider = new Set<string>();
     for (const result of chartResults) {
@@ -138,13 +162,14 @@ async function refresh(): Promise<void> {
       providers,
       chartsByProvider,
       errorsByProvider,
-      historyRangeLabel(selectedRange),
-      HISTORY_RANGES[selectedRange].seconds,
+      historyRangeLabel(range),
+      HISTORY_RANGES[range].seconds,
       resets,
     );
-    renderedRange = selectedRange;
+    renderedRange = range;
   } catch (error) {
     console.error(error);
+    if (version === refreshVersion) balancesEl.innerHTML = card("Balances & expiry", '<p class="empty-state">Current balances could not be loaded. Retrying on the next refresh.</p>');
   }
 }
 

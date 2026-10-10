@@ -1,6 +1,57 @@
 import { z } from "zod";
+import type { CreditBalance, CreditGrant } from "./credit-balances.ts";
 import type { UsageSnapshot, UsageWindow } from "./types.ts";
 import { MAX_RESET_CREDITS } from "./reset-credits.ts";
+
+const timestampSchema = z.string().datetime();
+const expirySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("unknown") }),
+  z.object({ kind: z.literal("never") }),
+  z.object({ kind: z.literal("at"), at: timestampSchema }),
+]);
+const remainingSchema = z.number().finite().nonnegative();
+const amountSchema = z.object({
+  remaining: remainingSchema.optional(),
+  unlimited: z.literal(true).optional(),
+}).superRefine((amount, context) => {
+  if (amount.remaining === undefined && amount.unlimited !== true) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "remaining or unlimited is required" });
+  }
+  if (amount.remaining !== undefined && amount.unlimited === true) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "remaining and unlimited cannot both be set" });
+  }
+});
+
+export const creditGrantSchema = z.object({
+  expiry: expirySchema,
+}).and(amountSchema);
+
+export const creditBalanceSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["credit", "manual_reset"]),
+  label: z.string().min(1),
+  unit: z.string().min(1),
+  expiry: expirySchema,
+  renewsAt: timestampSchema.optional(),
+  grants: z.array(creditGrantSchema).optional(),
+}).and(amountSchema);
+
+const creditBalancesSchema = z.array(creditBalanceSchema).superRefine((balances, context) => {
+  const identities = new Set<string>();
+  for (const [index, balance] of balances.entries()) {
+    // A provider may use the same display id for balances in different units.
+    // Only an exact resource identity would make the history ambiguous.
+    const identity = `${balance.id}\u0000${balance.kind}\u0000${balance.unit}`;
+    if (identities.has(identity)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "credit balance identities must be unique",
+        path: [index],
+      });
+    }
+    identities.add(identity);
+  }
+});
 
 /** Validates a `UsageSnapshot` received over the wire (the ingest endpoint's request body). */
 export const usageWindowSchema = z.object({
@@ -29,6 +80,7 @@ export const usageSnapshotSchema = z.object({
   cliVersion: z.string().optional(),
   errorCode: z.string().optional(),
   resetCredits: z.number().finite().int().nonnegative().max(MAX_RESET_CREDITS).optional(),
+  creditBalances: creditBalancesSchema.optional(),
   error: z.string().optional(),
 });
 
@@ -50,8 +102,36 @@ export function toUsageSnapshot(parsed: ParsedSnapshot): UsageSnapshot {
     ...(parsed.cliVersion !== undefined ? { cliVersion: parsed.cliVersion } : {}),
     ...(parsed.errorCode !== undefined ? { errorCode: parsed.errorCode } : {}),
     ...(parsed.resetCredits !== undefined ? { resetCredits: parsed.resetCredits } : {}),
+    ...(parsed.creditBalances !== undefined ? { creditBalances: toCreditBalances(parsed.creditBalances) } : {}),
     ...(parsed.error !== undefined ? { error: parsed.error } : {}),
   };
+}
+
+/** Removes Zod's present-but-undefined optional keys for the domain contract. */
+export function toCreditBalances(parsed: z.infer<typeof creditBalanceSchema>[]): CreditBalance[] {
+  return parsed.map((balance) => ({
+    id: balance.id,
+    kind: balance.kind,
+    label: balance.label,
+    unit: balance.unit,
+    expiry: balance.expiry,
+    ...toCreditAmount(balance),
+    ...(balance.renewsAt !== undefined ? { renewsAt: balance.renewsAt } : {}),
+    ...(balance.grants !== undefined ? { grants: balance.grants.map(toCreditGrant) } : {}),
+  }));
+}
+
+function toCreditGrant(grant: z.infer<typeof creditGrantSchema>): CreditGrant {
+  return {
+    expiry: grant.expiry,
+    ...toCreditAmount(grant),
+  };
+}
+
+function toCreditAmount(amount: { remaining?: number | undefined; unlimited?: true | undefined }):
+  | { remaining: number }
+  | { unlimited: true } {
+  return amount.remaining !== undefined ? { remaining: amount.remaining } : { unlimited: true };
 }
 
 function toUsageWindow(parsed: ParsedWindow): UsageWindow {

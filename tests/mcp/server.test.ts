@@ -69,7 +69,13 @@ describe("MCP server", () => {
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name);
     expect(names).toEqual(
-      expect.arrayContaining(["list_providers", "get_latest_usage", "get_usage_history", "get_next_resets"]),
+      expect.arrayContaining([
+        "list_providers",
+        "get_latest_usage",
+        "get_usage_history",
+        "get_credit_balance_history",
+        "get_next_resets",
+      ]),
     );
   });
 
@@ -82,9 +88,13 @@ describe("MCP server", () => {
       errorCode: string | null;
       cliVersion: string | null;
       resetCredits: number | null;
+      creditBalances: unknown;
     }[];
     expect(payload.find((entry) => entry.id === "codex")?.hasData).toBe(true);
     expect(payload.find((entry) => entry.id === "codex")?.resetCredits).toBe(0);
+    expect(payload.find((entry) => entry.id === "codex")?.creditBalances).toMatchObject([
+      { id: "manual-reset-credits", remaining: 0 },
+    ]);
     expect(payload.find((entry) => entry.id === "claude")?.hasData).toBe(false);
     expect(payload.find((entry) => entry.id === "antigravity")).toMatchObject({
       status: "failing",
@@ -98,6 +108,20 @@ describe("MCP server", () => {
     const payload = firstTextPayload(result as never) as { provider: string }[];
     expect(payload).toHaveLength(1);
     expect(payload[0]?.provider).toBe("codex");
+  });
+
+  test("get_credit_balance_history returns bounded balance observations", async () => {
+    const result = await client.callTool({
+      name: "get_credit_balance_history",
+      arguments: { provider: "codex", since: "2026-07-18T08:00:00.000Z", limit: 10 },
+    });
+    const payload = firstTextPayload(result as never) as { observedAt: string; creditBalances: unknown }[];
+    expect(payload).toEqual([
+      expect.objectContaining({
+        observedAt: "2026-07-18T09:00:00Z",
+        creditBalances: [expect.objectContaining({ id: "manual-reset-credits", remaining: 0 })],
+      }),
+    ]);
   });
 
   test("get_next_resets reflects the parsed reset time", async () => {

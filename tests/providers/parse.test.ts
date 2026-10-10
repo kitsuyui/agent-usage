@@ -96,6 +96,86 @@ describe("parseCodexUsage", () => {
     expect(snapshot.resetCredits).toBe(0);
   });
 
+  test("keeps available reset grants and metered credit balances without exposing grant identifiers", () => {
+    const raw = JSON.stringify({
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 12, windowDurationMins: 300 },
+          credits: { hasCredits: true, unlimited: false, balance: "4.5" },
+        },
+        other: {
+          limitId: "other",
+          primary: { usedPercent: 8, windowDurationMins: 300 },
+          credits: { hasCredits: true, unlimited: true, balance: null },
+        },
+        zero: {
+          limitId: "zero",
+          primary: { usedPercent: 7, windowDurationMins: 300 },
+          credits: { hasCredits: false, unlimited: false, balance: "0" },
+        },
+        invalid: {
+          limitId: "invalid",
+          primary: { usedPercent: 6, windowDurationMins: 300 },
+          credits: { hasCredits: true, unlimited: false, balance: "0x20" },
+        },
+        exponent: {
+          limitId: "exponent",
+          primary: { usedPercent: 6, windowDurationMins: 300 },
+          credits: { hasCredits: true, unlimited: false, balance: "1e2" },
+        },
+      },
+      rateLimitResetCredits: {
+        availableCount: 3,
+        credits: [
+          { id: "opaque-a", status: "available", expiresAt: 1786320000 },
+          { id: "opaque-b", status: "available", expiresAt: null },
+          { id: "opaque-c", status: "redeemed", expiresAt: 1786320000 },
+        ],
+      },
+    });
+    const snapshot = parseCodexUsage(raw, OBSERVED);
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.creditBalances).toEqual([
+      {
+        id: "manual-reset-credits",
+        kind: "manual_reset",
+        label: "Manual resets",
+        unit: "reset",
+        remaining: 3,
+        expiry: { kind: "unknown" },
+        grants: [
+          { remaining: 1, expiry: { kind: "at", at: "2026-08-10T00:00:00.000Z" } },
+          { remaining: 1, expiry: { kind: "never" } },
+        ],
+      },
+      {
+        id: "limit-credits:codex",
+        kind: "credit",
+        label: "codex credits",
+        unit: "Credits",
+        remaining: 4.5,
+        expiry: { kind: "unknown" },
+      },
+      {
+        id: "limit-credits:other",
+        kind: "credit",
+        label: "other credits",
+        unit: "Credits",
+        unlimited: true,
+        expiry: { kind: "unknown" },
+      },
+      {
+        id: "limit-credits:zero",
+        kind: "credit",
+        label: "zero credits",
+        unit: "Credits",
+        remaining: 0,
+        expiry: { kind: "unknown" },
+      },
+    ]);
+  });
+
   test("omits invalid or absent structured reset-credit counts", () => {
     for (const availableCount of [undefined, -1, 1.5, Number.NaN, 2_147_483_648]) {
       const snapshot = parseCodexUsage(JSON.stringify({ rateLimitResetCredits: { availableCount } }), OBSERVED);
@@ -139,6 +219,7 @@ describe("parseCodexUsage", () => {
       window: "Weekly",
       remainingPercent: 88,
     });
+    expect(snapshot.creditBalances).toBeUndefined();
   });
 
   test("records reset-credit tickets when reported", () => {
@@ -196,6 +277,17 @@ describe("parseCopilotUsage", () => {
     // rule (00:00 UTC on the 1st), not scraped.
     expect(snapshot.windows[0]?.resetsRaw).toBeUndefined();
     expect(snapshot.windows[0]?.resetsAt).toBe("2026-08-01T00:00:00Z");
+    expect(snapshot.creditBalances).toEqual([
+      {
+        id: "monthly-ai-credits",
+        kind: "credit",
+        label: "AI Credits",
+        unit: "AIC",
+        remaining: 200,
+        expiry: { kind: "unknown" },
+        renewsAt: "2026-08-01T00:00:00Z",
+      },
+    ]);
   });
 
   test("handles a non-zero usage percentage", () => {
