@@ -17,6 +17,7 @@ export interface ChartSeries {
 export interface ChartReset {
   seriesId: string;
   resetsAt: string | null;
+  /** First observed point of the API's estimate segment, not a reset event. */
   previousResetAt?: string | null;
   cyclePace?: {
     firstObservedAt: string;
@@ -104,14 +105,14 @@ function resetDescription(reset: ChartReset | undefined, now: number): string {
   if (time === null) return reset ? "Reset time unavailable" : "No current reset data";
   if (time <= now) return `Reported reset ${absoluteResetTime(time)} · awaiting update`;
   const previous = previousResetTime(reset);
-  const cycleStart = previous !== null && previous < now ? `Cycle began ${absoluteResetTime(previous)} · ` : "";
-  return `${cycleStart}Next reset ${absoluteResetTime(time)} · ${countdown(time, now)}`;
+  const paceStart = previous !== null && previous < now ? `Pace since ${absoluteResetTime(previous)} · ` : "";
+  return `${paceStart}Next reset ${absoluteResetTime(time)} · ${countdown(time, now)}`;
 }
 
 /**
- * A single, transparent pace estimate: net change between the first and last
- * observations in the currently observed reset cycle. It deliberately does
- * not infer a boundary from a nominal duration.
+ * A single, transparent pace estimate reported by the API. The storage layer
+ * owns boundary detection so the chart cannot accidentally bridge a recovery
+ * that is absent from its selected history range.
  */
 export function cycleAverageTrend(
   series: ChartSeries,
@@ -124,7 +125,8 @@ export function cycleAverageTrend(
   if (previous === null || next === null || previous >= next || next <= now) return null;
 
   const reportedPace = reset?.cyclePace;
-  if (reportedPace) {
+  if (!reportedPace) return null;
+  {
     const firstObservedAt = Date.parse(reportedPace.firstObservedAt);
     const observedAt = Date.parse(reportedPace.latestObservedAt);
     if (
@@ -139,6 +141,7 @@ export function cycleAverageTrend(
     ) {
       const ratePerMs = (reportedPace.latestRemainingPercent - reportedPace.firstRemainingPercent) /
         (observedAt - firstObservedAt);
+      if (ratePerMs >= 0) return null;
       return {
         firstObservedAt,
         firstValue: reportedPace.firstRemainingPercent,
@@ -150,26 +153,7 @@ export function cycleAverageTrend(
       };
     }
   }
-
-  const points = [...series.points]
-    .sort(([left], [right]) => left - right)
-    .filter(([time]) => time >= previous && time <= now && time < next);
-  if (points.length < 2) return null;
-  const first = points[0]!;
-  const latest = points.at(-1)!;
-  const elapsed = latest[0] - first[0];
-  if (elapsed <= 0) return null;
-
-  const ratePerMs = (latest[1] - first[1]) / elapsed;
-  return {
-    firstObservedAt: first[0],
-    firstValue: first[1],
-    observedAt: latest[0],
-    observedValue: latest[1],
-    resetsAt: next,
-    ratePerMs,
-    projectedValue: latest[1] + ratePerMs * (next - latest[0]),
-  };
+  return null;
 }
 
 /** The same current-cycle pace reaches zero only if it does so before the next reset. */

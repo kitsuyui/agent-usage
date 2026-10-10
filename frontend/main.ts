@@ -56,6 +56,7 @@ interface CyclePace {
 
 type NextReset = Omit<HistoryPoint, "observedAt" | "resetsRaw" | "seriesId"> & {
   seriesId: string;
+  /** First observed point of the estimate segment, retained under the legacy API name. */
   previousResetAt: string | null;
   cyclePace: CyclePace | null;
 };
@@ -250,7 +251,7 @@ function renderCharts(
                   <div class="chart-heading"><span>${escapeHtml(scaleLabel(group.series[0]!, group.scale))}</span><span>${escapeHtml(rangeLabel)}</span></div>
                   <div class="chart-scroll" tabindex="0" role="region" aria-label="${escapeHtml(provider.displayName)} ${escapeHtml(scaleLabel(group.series[0]!, group.scale))} history, reset times, and average pace">${svg}</div>
                   <div class="chart-legend" role="list">${buildLegend(group.series, resets, now)}</div>
-                  <p class="chart-hint">Charts are bounded to the selected history range. Dashed vertical lines mark next resets; faint dotted lines mark prior observed resets. Dotted lines extend the current-cycle average pace when the selected range includes a complete cycle view.</p>
+                  <p class="chart-hint">Charts are bounded to the selected history range. Dashed vertical lines mark next resets; faint dotted lines mark the observed start of an estimate segment. Dotted lines extend the current-cycle average pace when the selected range includes a complete cycle view.</p>
                 </section>`;
               })
               .join("");
