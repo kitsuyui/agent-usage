@@ -1,3 +1,4 @@
+import type { CreditBalance, CreditGrant } from "../../domain/credit-balances.ts";
 import { snapshotFromWindows, type UsageSnapshot, type UsageWindow } from "../../domain/types.ts";
 import { isResetCreditCount } from "../../domain/reset-credits.ts";
 import { registerWindowKind } from "../../domain/window-kinds.ts";
@@ -53,12 +54,19 @@ type RateLimitBucket = {
   planType?: unknown;
   primary?: RateLimitWindow | null;
   secondary?: RateLimitWindow | null;
+  credits?: { hasCredits?: unknown; unlimited?: unknown; balance?: unknown } | null;
+};
+
+type RateLimitResetCredit = {
+  id?: unknown;
+  status?: unknown;
+  expiresAt?: unknown;
 };
 
 type RateLimitResponse = {
   rateLimits?: RateLimitBucket | null;
   rateLimitsByLimitId?: Record<string, RateLimitBucket> | null;
-  rateLimitResetCredits?: { availableCount?: unknown } | null;
+  rateLimitResetCredits?: { availableCount?: unknown; credits?: RateLimitResetCredit[] | null } | null;
 };
 
 function parseStructuredRateLimits(raw: string, observedAt: string): UsageSnapshot | undefined {
@@ -107,7 +115,86 @@ function parseStructuredRateLimits(raw: string, observedAt: string): UsageSnapsh
 
   const snapshot = snapshotFromWindows("codex", observedAt, windows);
   const resetCredits = response.rateLimitResetCredits?.availableCount;
-  return isResetCreditCount(resetCredits) ? { ...snapshot, resetCredits } : snapshot;
+  const creditBalances = creditBalancesFromResponse(entries, response.rateLimitResetCredits, resetCredits);
+  const captured = snapshot.ok || creditBalances.length === 0
+    ? snapshot
+    : { schemaVersion: 1 as const, observedAt, provider: "codex", ok: true, windows };
+  return {
+    ...captured,
+    ...(isResetCreditCount(resetCredits) ? { resetCredits } : {}),
+    ...(creditBalances.length > 0 ? { creditBalances } : {}),
+  };
+}
+
+function creditBalancesFromResponse(
+  entries: readonly (readonly [string, RateLimitBucket])[],
+  resetCredits: RateLimitResponse["rateLimitResetCredits"],
+  availableCount: unknown,
+): CreditBalance[] {
+  const balances: CreditBalance[] = [];
+  if (isResetCreditCount(availableCount)) {
+    const grants = resetCredits?.credits === null
+      ? undefined
+      : resetCredits?.credits
+        ?.flatMap(toAvailableResetGrant)
+        .filter((grant): grant is CreditGrant => grant !== undefined);
+    balances.push({
+      id: "manual-reset-credits",
+      kind: "manual_reset",
+      label: "Manual resets",
+      unit: "reset",
+      remaining: availableCount,
+      expiry: { kind: "unknown" },
+      ...(grants !== undefined ? { grants } : {}),
+    });
+  }
+  for (const [limitId, bucket] of entries) {
+    const credits = bucket.credits;
+    if (!credits) continue;
+    if (credits.unlimited === true) {
+      balances.push({
+        id: `limit-credits:${limitId}`,
+        kind: "credit",
+        label: `${limitId} credits`,
+        unit: "Credits",
+        unlimited: true,
+        expiry: { kind: "unknown" },
+      });
+      continue;
+    }
+    const remaining = numericBalance(credits.balance);
+    if (remaining === undefined) continue;
+    balances.push({
+      id: `limit-credits:${limitId}`,
+      kind: "credit",
+      label: `${limitId} credits`,
+      unit: "Credits",
+      remaining,
+      expiry: { kind: "unknown" },
+    });
+  }
+  return balances;
+}
+
+function toAvailableResetGrant(credit: RateLimitResetCredit): CreditGrant | undefined {
+  if (credit.status !== "available" || typeof credit.id !== "string" || !credit.id) return undefined;
+  return {
+    remaining: 1,
+    expiry: expiryFromUnixSeconds(credit.expiresAt),
+  };
+}
+
+function expiryFromUnixSeconds(value: unknown): CreditGrant["expiry"] {
+  if (value === null) return { kind: "never" };
+  if (typeof value !== "number" || !Number.isFinite(value)) return { kind: "unknown" };
+  const timestamp = new Date(value * 1_000);
+  return Number.isNaN(timestamp.getTime()) ? { kind: "unknown" } : { kind: "at", at: timestamp.toISOString() };
+}
+
+function numericBalance(value: unknown): number | undefined {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function windowLabel(minutes: number): string {

@@ -1,5 +1,7 @@
 /** Provider-neutral shapes shared across capture, storage, and API layers. */
 
+import type { CreditBalance } from "./credit-balances.ts";
+
 /** One rate-limit / usage window a provider reports (e.g. "5h", "weekly"). */
 export interface UsageWindow {
   /** Provider-reported sub-scope, e.g. a specific model. Absent when the
@@ -46,6 +48,8 @@ export interface UsageSnapshot {
   errorCode?: string;
   /** Manual reset credits/tickets some providers report (e.g. Codex). */
   resetCredits?: number;
+  /** Provider-reported credit balances and manual reset rights, when available. */
+  creditBalances?: CreditBalance[];
   error?: string;
 }
 

@@ -36,6 +36,15 @@ beforeAll(async () => {
       ]),
       cliVersion: "claude 2.1.212",
       resetCredits: 0,
+      creditBalances: [{
+        id: "monthly-credits",
+        kind: "credit",
+        label: "Monthly credits",
+        unit: "Credits",
+        remaining: 5,
+        expiry: { kind: "unknown" },
+        renewsAt: "2026-08-01T00:00:00.000Z",
+      }],
     },
   );
   await recordSnapshot(db, {
@@ -91,6 +100,7 @@ describe("HTTP API", () => {
       status: "healthy",
       cliVersion: "claude 2.1.212",
       resetCredits: 0,
+      creditBalances: [{ id: "monthly-credits", remaining: 5 }],
     });
     expect(body.find((entry) => entry.id === "antigravity")).toMatchObject({
       status: "failing",
@@ -120,6 +130,26 @@ describe("HTTP API", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { observedAt: string }[];
     expect(body.map((point) => point.observedAt)).toEqual(["2026-07-18T09:00:00Z"]);
+  });
+
+  test("GET /api/usage/credit-balances/history returns bounded observations including gaps", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/usage/credit-balances/history?provider=claude&since=2026-07-18T08:00:00Z&until=2026-07-18T10:00:00Z&limit=10`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([
+      expect.objectContaining({
+        observedAt: "2026-07-18T09:00:00Z",
+        ok: true,
+        creditBalances: [expect.objectContaining({ id: "monthly-credits", remaining: 5 })],
+      }),
+    ]);
+  });
+
+  test("GET /api/usage/credit-balances/history requires a provider", async () => {
+    const response = await fetch(`${baseUrl}/api/usage/credit-balances/history?range=21d`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "provider is required" });
   });
 
   test("GET /api/usage/chart groups metadata and returns compact point tuples", async () => {

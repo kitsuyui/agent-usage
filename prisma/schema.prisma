@@ -29,6 +29,9 @@ model Sample {
   // Reset "tickets"/credits some providers report (e.g. Codex's manual
   // usage-limit resets). Provider-specific; nullable everywhere else.
   resetCredits Int?
+  // Canonical JSON of provider-reported balances and optional grant breakdowns.
+  // A nullable field keeps the schema additive while preserving each capture.
+  creditBalancesJson String?
 
   windows Window[]
 

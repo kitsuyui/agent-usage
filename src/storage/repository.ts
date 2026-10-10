@@ -1,4 +1,6 @@
 import type { PrismaClient, Sample, Window } from "@prisma/client";
+import type { CreditBalance } from "../domain/credit-balances.ts";
+import { creditBalanceSchema, toCreditBalances } from "../domain/snapshot-schema.ts";
 import type { UsageSnapshot, UsageWindow } from "../domain/types.ts";
 import { toIsoSeconds } from "../domain/time.ts";
 
@@ -17,6 +19,7 @@ export async function recordSnapshot(db: PrismaClient, snapshot: UsageSnapshot):
       errorCode: snapshot.errorCode ?? null,
       cliVersion: snapshot.cliVersion ?? null,
       resetCredits: snapshot.resetCredits ?? null,
+      creditBalancesJson: snapshot.creditBalances ? JSON.stringify(snapshot.creditBalances) : null,
       windows: {
         create: snapshot.windows.map((window) => ({
           scope: window.scope ?? null,
@@ -85,6 +88,8 @@ export interface ProviderHealth {
   cliVersion: string | null;
   /** Count reported by the latest successful capture; never carried forward. */
   resetCredits: number | null;
+  /** Balances from the latest successful capture; never carried forward. */
+  creditBalances: CreditBalance[] | null;
 }
 
 /** Capture health for one provider, including failures that produced no windows. */
@@ -122,7 +127,49 @@ export async function providerHealth(
     error: latest?.error ?? null,
     cliVersion: latest?.cliVersion ?? null,
     resetCredits: latest?.ok ? latest.resetCredits : null,
+    creditBalances: latest?.ok ? creditBalancesFromSample(latest) ?? null : null,
   };
+}
+
+export interface CreditBalanceHistoryQuery {
+  provider: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+}
+
+export interface CreditBalanceHistoryPoint {
+  observedAt: string;
+  ok: boolean;
+  creditBalances: CreditBalance[] | null;
+}
+
+/** Bounded balance history. Null entries intentionally break UI history after omitted or failed captures. */
+export async function queryCreditBalanceHistory(
+  db: PrismaClient,
+  query: CreditBalanceHistoryQuery,
+): Promise<CreditBalanceHistoryPoint[]> {
+  const rows = await db.sample.findMany({
+    where: {
+      provider: query.provider,
+      ...(query.since || query.until
+        ? {
+            observedAt: {
+              ...(query.since ? { gte: new Date(query.since) } : {}),
+              ...(query.until ? { lte: new Date(query.until) } : {}),
+            },
+          }
+        : {}),
+    },
+    select: { observedAt: true, ok: true, resetCredits: true, creditBalancesJson: true },
+    orderBy: { observedAt: "desc" },
+    take: Math.min(query.limit ?? 100_000, 100_000),
+  });
+  return rows.reverse().map((sample) => ({
+    observedAt: toIsoSeconds(sample.observedAt),
+    ok: sample.ok,
+    creditBalances: sample.ok ? creditBalancesFromSample(sample) ?? null : null,
+  }));
 }
 
 export interface HistoryQuery {
@@ -398,6 +445,7 @@ function remainingPercentOf(window: {
 }
 
 function toSnapshot(sample: SampleWithWindows): UsageSnapshot {
+  const creditBalances = creditBalancesFromSample(sample);
   return {
     schemaVersion: 1,
     observedAt: toIsoSeconds(sample.observedAt),
@@ -405,10 +453,34 @@ function toSnapshot(sample: SampleWithWindows): UsageSnapshot {
     ok: sample.ok,
     windows: sample.windows.map(toUsageWindow),
     ...(sample.resetCredits !== null ? { resetCredits: sample.resetCredits } : {}),
+    ...(creditBalances !== undefined ? { creditBalances } : {}),
     ...(sample.cliVersion !== null ? { cliVersion: sample.cliVersion } : {}),
     ...(sample.errorCode !== null ? { errorCode: sample.errorCode } : {}),
     ...(sample.error !== null ? { error: sample.error } : {}),
   };
+}
+
+function creditBalancesFromSample(
+  sample: Pick<Sample, "creditBalancesJson" | "resetCredits">,
+): CreditBalance[] | undefined {
+  if (sample.creditBalancesJson !== null) {
+    try {
+      const parsed = creditBalanceSchema.array().safeParse(JSON.parse(sample.creditBalancesJson));
+      return parsed.success ? toCreditBalances(parsed.data) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return sample.resetCredits === null
+    ? undefined
+    : [{
+      id: "manual-reset-credits",
+      kind: "manual_reset",
+      label: "Manual resets",
+      unit: "reset",
+      remaining: sample.resetCredits,
+      expiry: { kind: "unknown" },
+    }];
 }
 
 function toUsageWindow(row: Window): UsageWindow {

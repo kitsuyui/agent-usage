@@ -8,6 +8,7 @@ import {
   latestSnapshot,
   nextResets,
   providerHealth,
+  queryCreditBalanceHistory,
   queryHistory,
   recordSnapshot,
 } from "../../src/storage/repository.ts";
@@ -329,6 +330,55 @@ describe("repository", () => {
       latestOk: false,
       resetCredits: null,
     });
+  });
+
+  test("stores balance expiry details and keeps omitted or failed captures as history gaps", async () => {
+    const provider = "credit-balance-history";
+    const observedAt = "2026-07-25T10:00:00Z";
+    const first = snapshotFromWindows(provider, observedAt, [
+      usedWindow({ window: "session", usedPercent: 10, observedAt }),
+    ]);
+    await recordSnapshot(db, {
+      ...first,
+      creditBalances: [{
+        id: "manual-reset-credits",
+        kind: "manual_reset",
+        label: "Manual resets",
+        unit: "reset",
+        remaining: 2,
+        expiry: { kind: "unknown" },
+        grants: [{ remaining: 1, expiry: { kind: "at", at: "2026-08-01T00:00:00Z" } }],
+      }],
+    });
+    const omittedAt = "2026-07-25T10:15:00Z";
+    await recordSnapshot(db, snapshotFromWindows(provider, omittedAt, [
+      usedWindow({ window: "session", usedPercent: 20, observedAt: omittedAt }),
+    ]));
+    expect(await providerHealth(db, provider, 60 * 60 * 24 * 365)).toMatchObject({
+      latestOk: true,
+      creditBalances: null,
+    });
+    await recordSnapshot(db, emptySnapshot(provider, "2026-07-25T10:30:00Z", "unavailable", "unavailable"));
+
+    expect(await providerHealth(db, provider, 60 * 60 * 24 * 365)).toMatchObject({
+      latestOk: false,
+      creditBalances: null,
+    });
+    const history = await queryCreditBalanceHistory(db, { provider, limit: 3 });
+    expect(history[0]).toMatchObject({
+      observedAt,
+      ok: true,
+      creditBalances: [{
+        id: "manual-reset-credits",
+        remaining: 2,
+        expiry: { kind: "unknown" },
+        grants: [{ remaining: 1, expiry: { kind: "at", at: "2026-08-01T00:00:00Z" } }],
+      }],
+    });
+    expect(history.slice(1)).toEqual([
+      { observedAt: omittedAt, ok: true, creditBalances: null },
+      { observedAt: "2026-07-25T10:30:00Z", ok: false, creditBalances: null },
+    ]);
   });
 
   test("marks an old successful collector as stale", async () => {

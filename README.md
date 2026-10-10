@@ -30,7 +30,7 @@ provider computes `resetsAt` directly instead of parsing it — see
   timestamp, so you can ask "when does this actually reset" instead of doing
   the math yourself.
 - HTTP API (`/api/providers`, `/api/usage/latest`, `/api/usage/history`, `/api/usage/chart`,
-  `/api/usage/next-resets`) and an MCP server exposing the same data as tools,
+  `/api/usage/credit-balances/history`, `/api/usage/next-resets`) and an MCP server exposing the same data as tools,
   so both scripts and agents can read it.
 - A dependency-free static dashboard (plain HTML/CSS/TS, hand-rolled SVG
   charts) served by the same HTTP server. It defaults to 21 days for trend
@@ -114,6 +114,19 @@ count from the latest capture when it succeeded. A value of `0` is reported as
 zero; `null` means it was not reported by that capture, or the latest capture
 failed, and does not reuse an earlier count. The dashboard refreshes this
 table every minute and labels stale counts explicitly.
+
+When a provider reports credit balances or manual reset rights, `creditBalances`
+adds their remaining amount or explicit unlimited status, individual expiry
+(`unknown`, `never`, or a timestamp), and a separate scheduled renewal time.
+`GET /api/usage/credit-balances/history` returns timestamped observations for
+one provider. It defaults to the latest 21 days and accepts the same
+`since`/`until`/`range` selectors and bounded `limit` as usage history; `null`
+balances mark an omitted or failed capture rather than reusing an earlier value.
+The dashboard draws reported balances as observations, and estimates recent
+consumption only from uninterrupted observations of the same balance. When an
+expiry is known, an "if unused" marker is a conditional horizon rather than a
+forecast of future replenishment. Renewal times are shown separately from
+expiry, so a scheduled renewal never implies that a balance expires then.
 
 ## Live sampling controls
 

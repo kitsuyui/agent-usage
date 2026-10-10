@@ -11,12 +11,33 @@ import {
   latestSnapshots,
   nextResets,
   providerHealth,
+  queryCreditBalanceHistory,
   queryHistory,
 } from "../storage/repository.ts";
 
 /** Builds the MCP server exposing recorded usage data as read-only tools. */
 export function createMcpServer(db: PrismaClient, staleAfterSeconds?: number): McpServer {
   const server = new McpServer({ name: "agent-usage", version: "0.1.0" });
+
+  server.registerTool(
+    "get_credit_balance_history",
+    {
+      title: "Get credit balance history",
+      description: "Returns bounded credit balance observations for one provider. Null balances mark omitted or failed captures.",
+      inputSchema: {
+        provider: z.string().describe('Provider id, e.g. "codex".'),
+        since: z.string().optional().describe("ISO-8601 timestamp; defaults to 21 days ago."),
+        until: z.string().optional().describe("ISO-8601 timestamp."),
+        limit: z.number().int().min(1).max(100_000).optional(),
+      },
+    },
+    async ({ provider, since, until, limit }) => textResult(await queryCreditBalanceHistory(db, {
+      provider,
+      since: since ?? new Date(Date.now() - 21 * 24 * 60 * 60 * 1_000).toISOString(),
+      ...(until ? { until } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    })),
+  );
 
   server.registerTool(
     "list_providers",

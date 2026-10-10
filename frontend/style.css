@@ -346,3 +346,29 @@ svg.usage-chart {
 #sampling-form input, #sampling-form button { font: inherit; padding: .4rem .6rem; }
 #sampling-minutes { width: 6rem; }
 #sampling-status { min-height: 1.5em; }
+
+.balance-table { min-width: 760px; }
+.balance-table td { vertical-align: top; padding-top: .65rem; padding-bottom: .65rem; }
+.balance-amount { font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.balance-note { display: block; margin-top: .3rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
+.balance-table details { min-width: 12rem; }
+.balance-table summary { cursor: pointer; }
+.balance-table ul { padding-left: 1rem; line-height: 1.6; }
+.balance-calendar { margin: 1rem 0 1.5rem; }
+.balance-calendar h3, .balance-group h3 { font-size: .85rem; font-weight: 650; }
+.balance-calendar ol { list-style: none; padding: 0; display: grid; gap: .65rem; }
+.balance-calendar li { display: grid; grid-template-columns: 12rem 1fr; gap: .65rem; border-left: 3px solid var(--warning); padding-left: .75rem; font-size: .8rem; }
+.balance-calendar time { color: var(--muted); }
+.balance-unit { color: var(--muted); font-weight: 400; }
+.balance-observed { fill: none; stroke: var(--accent); stroke-width: 2; }
+.balance-pace { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; }
+.balance-unused { fill: none; stroke: var(--warning); stroke-width: 2; stroke-dasharray: 3 4; }
+.balance-expiry { stroke: var(--warning); stroke-dasharray: 2 4; }
+.balance-event { fill: var(--muted); font-size: 11px; }
+.balance-renewal { stroke: var(--ok); stroke-dasharray: 8 4; }
+.balance-key { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .75rem; }
+.key-observed, .key-pace { color: var(--accent); }
+.key-unused { color: var(--warning); }
+@media (max-width: 640px) {
+  .balance-calendar li { grid-template-columns: 1fr; gap: .2rem; }
+}

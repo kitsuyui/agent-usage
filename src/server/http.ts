@@ -13,6 +13,7 @@ import {
   latestSnapshots,
   nextResets,
   providerHealth,
+  queryCreditBalanceHistory,
   queryHistory,
   recordSnapshot,
 } from "../storage/repository.ts";
@@ -65,6 +66,10 @@ export function createHttpServer(options: HttpServerOptions) {
           const parsed = parseHistoryQuery(url.searchParams);
           const points = await queryHistory(db, parsed.query);
           return json(parsed.maxPoints ? downsampleHistory(points, parsed.maxPoints) : points);
+        }
+        if (url.pathname === "/api/usage/credit-balances/history") {
+          const query = parseCreditBalanceHistoryQuery(url.searchParams);
+          return json(await queryCreditBalanceHistory(db, query));
         }
         if (url.pathname === "/api/usage/chart") {
           const parsed = parseHistoryQuery(url.searchParams);
@@ -196,6 +201,18 @@ function parseHistoryQuery(params: URLSearchParams): ParsedHistoryQuery {
       ...(limit !== undefined ? { limit } : {}),
     },
     ...(maxPoints !== undefined ? { maxPoints } : {}),
+  };
+}
+
+function parseCreditBalanceHistoryQuery(params: URLSearchParams) {
+  const parsed = parseHistoryQuery(params);
+  if (!parsed.query.provider) throw new BadRequestError("provider is required");
+  const defaultSince = new Date(Date.now() - 21 * 24 * 60 * 60 * 1_000).toISOString();
+  return {
+    provider: parsed.query.provider,
+    since: parsed.query.since ?? defaultSince,
+    ...(parsed.query.until ? { until: parsed.query.until } : {}),
+    limit: parsed.query.limit ?? 100_000,
   };
 }
 

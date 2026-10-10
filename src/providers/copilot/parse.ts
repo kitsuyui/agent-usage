@@ -44,5 +44,20 @@ export function parseCopilotUsage(raw: string, observedAt: string): UsageSnapsho
       }),
     );
   }
-  return snapshotFromWindows("copilot", observedAt, windows);
+  const snapshot = snapshotFromWindows("copilot", observedAt, windows);
+  if (!creditMatch) return snapshot;
+  const usedValue = Number(creditMatch[1]);
+  const limitValue = Number(creditMatch[2]);
+  return {
+    ...snapshot,
+    creditBalances: [{
+      id: "monthly-ai-credits",
+      kind: "credit",
+      label: "AI Credits",
+      unit: "AIC",
+      remaining: Math.max(0, limitValue - usedValue),
+      expiry: { kind: "unknown" },
+      renewsAt: resetsAt,
+    }],
+  };
 }
