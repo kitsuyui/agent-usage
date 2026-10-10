@@ -83,6 +83,8 @@ export interface ProviderHealth {
   errorCode: string | null;
   error: string | null;
   cliVersion: string | null;
+  /** Count reported by the latest successful capture; never carried forward. */
+  resetCredits: number | null;
 }
 
 /** Capture health for one provider, including failures that produced no windows. */
@@ -119,6 +121,7 @@ export async function providerHealth(
     errorCode: latest?.errorCode ?? null,
     error: latest?.error ?? null,
     cliVersion: latest?.cliVersion ?? null,
+    resetCredits: latest?.ok ? latest.resetCredits : null,
   };
 }
 

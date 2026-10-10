@@ -109,7 +109,11 @@ responses, so clients can match current resets to the correct usage series.
 `GET /api/providers` reports current collector health: `status`
 (`healthy`, `failing`, `stale`, or `no_data`), the last attempt and success
 times, consecutive failures, the latest stable `errorCode`, and `cliVersion`.
-The dashboard refreshes this table every minute.
+When a provider reports unused manual reset credits, `resetCredits` is the
+count from the latest capture when it succeeded. A value of `0` is reported as
+zero; `null` means it was not reported by that capture, or the latest capture
+failed, and does not reuse an earlier count. The dashboard refreshes this
+table every minute and labels stale counts explicitly.
 
 ## Live sampling controls
 

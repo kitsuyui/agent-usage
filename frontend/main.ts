@@ -3,6 +3,7 @@
 
 import { activeChartSeries, buildChartSvg, buildLegend, groupChartSeries, type ChartSeries } from "./chart.ts";
 import { escapeHtml, formatNumber, scopeLabel } from "./format.ts";
+import { manualResetsLabel } from "./collector-status.ts";
 import {
   HISTORY_RANGES,
   historyQueryRange,
@@ -24,6 +25,7 @@ interface ProviderInfo {
   errorCode: string | null;
   error: string | null;
   cliVersion: string | null;
+  resetCredits: number | null;
 }
 
 interface HistoryPoint {
@@ -152,6 +154,7 @@ function renderCollectors(container: HTMLElement, providers: ProviderInfo[]): vo
       (provider) => `<tr>
         <td>${escapeHtml(provider.displayName)}</td>
         <td><span class="status status-${escapeHtml(provider.status)}">${escapeHtml(statusLabel(provider.status))}</span></td>
+        <td>${escapeHtml(manualResetsLabel(provider))}</td>
         <td><code>${escapeHtml(provider.cliVersion ?? "Unavailable")}</code></td>
         <td>${formatTimestamp(provider.lastAttemptAt)}</td>
         <td>${formatTimestamp(provider.lastSuccessAt)}</td>
@@ -161,9 +164,9 @@ function renderCollectors(container: HTMLElement, providers: ProviderInfo[]): vo
     )
     .join("");
   container.innerHTML = `<div class="table-scroll"><table>
-      <thead><tr><th>Provider</th><th>Status</th><th>CLI version</th><th>Last attempt</th><th>Last success</th><th>Failures</th><th>Error</th></tr></thead>
+      <thead><tr><th>Provider</th><th>Status</th><th>Manual resets</th><th>CLI version</th><th>Last attempt</th><th>Last success</th><th>Failures</th><th>Error</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table></div>`;
+    </table></div><p class="chart-hint">Manual resets are unused reset credits reported by each provider. “Not reported” means no count was provided; stale counts may have changed.</p>`;
 }
 
 function statusLabel(status: ProviderInfo["status"]): string {

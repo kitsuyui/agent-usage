@@ -35,6 +35,7 @@ beforeAll(async () => {
         usedWindow({ window: "session", usedPercent: 20, observedAt }),
       ]),
       cliVersion: "claude 2.1.212",
+      resetCredits: 0,
     },
   );
   await recordSnapshot(db, {
@@ -79,6 +80,7 @@ describe("HTTP API", () => {
       status: string;
       errorCode: string | null;
       cliVersion: string | null;
+      resetCredits: number | null;
     }[];
     const ids = body.map((entry) => entry.id);
     expect(ids).toEqual(expect.arrayContaining(["claude", "codex", "antigravity", "copilot"]));
@@ -88,6 +90,7 @@ describe("HTTP API", () => {
     expect(body.find((entry) => entry.id === "claude")).toMatchObject({
       status: "healthy",
       cliVersion: "claude 2.1.212",
+      resetCredits: 0,
     });
     expect(body.find((entry) => entry.id === "antigravity")).toMatchObject({
       status: "failing",
@@ -207,6 +210,21 @@ describe("HTTP API", () => {
       body: JSON.stringify({ not: "a snapshot" }),
     });
     expect(response.status).toBe(400);
+  });
+
+  test("POST /api/usage/samples rejects invalid reset-credit counts", async () => {
+    for (const resetCredits of [-1, 1.5, 2_147_483_648]) {
+      const snapshot = {
+        ...snapshotFromWindows("codex", "2026-07-18T10:05:00Z", []),
+        resetCredits,
+      };
+      const response = await fetch(`${baseUrl}/api/usage/samples`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(snapshot),
+      });
+      expect(response.status).toBe(400);
+    }
   });
 });
 

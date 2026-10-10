@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { UsageSnapshot, UsageWindow } from "./types.ts";
+import { MAX_RESET_CREDITS } from "./reset-credits.ts";
 
 /** Validates a `UsageSnapshot` received over the wire (the ingest endpoint's request body). */
 export const usageWindowSchema = z.object({
@@ -27,7 +28,7 @@ export const usageSnapshotSchema = z.object({
   windows: z.array(usageWindowSchema),
   cliVersion: z.string().optional(),
   errorCode: z.string().optional(),
-  resetCredits: z.number().optional(),
+  resetCredits: z.number().finite().int().nonnegative().max(MAX_RESET_CREDITS).optional(),
   error: z.string().optional(),
 });
 

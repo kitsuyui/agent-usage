@@ -91,6 +91,18 @@ describe("parseCodexUsage", () => {
     });
   });
 
+  test("keeps a reported zero reset-credit count", () => {
+    const snapshot = parseCodexUsage(JSON.stringify({ rateLimitResetCredits: { availableCount: 0 } }), OBSERVED);
+    expect(snapshot.resetCredits).toBe(0);
+  });
+
+  test("omits invalid or absent structured reset-credit counts", () => {
+    for (const availableCount of [undefined, -1, 1.5, Number.NaN, 2_147_483_648]) {
+      const snapshot = parseCodexUsage(JSON.stringify({ rateLimitResetCredits: { availableCount } }), OBSERVED);
+      expect(snapshot.resetCredits).toBeUndefined();
+    }
+  });
+
   test("extracts a scoped weekly window", () => {
     const raw = "GPT models limit:\nWeekly limit: [####] 58% left (resets 13:21 on 20 Jul)";
     const snapshot = parseCodexUsage(raw, OBSERVED);
@@ -130,6 +142,7 @@ describe("parseCodexUsage", () => {
   });
 
   test("records reset-credit tickets when reported", () => {
+    expect(parseCodexUsage("You have 0 usage limit resets available", OBSERVED).resetCredits).toBe(0);
     expect(parseCodexUsage("You have 1 usage limit reset available", OBSERVED).resetCredits).toBe(1);
     expect(parseCodexUsage("You have 2 usage limit resets available", OBSERVED).resetCredits).toBe(2);
   });

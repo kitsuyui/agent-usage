@@ -1,4 +1,5 @@
 import { snapshotFromWindows, type UsageSnapshot, type UsageWindow } from "../../domain/types.ts";
+import { isResetCreditCount } from "../../domain/reset-credits.ts";
 import { registerWindowKind } from "../../domain/window-kinds.ts";
 import { remainingWindow, usedWindow } from "../../domain/window-builder.ts";
 
@@ -36,7 +37,8 @@ export function parseCodexUsage(raw: string, observedAt: string): UsageSnapshot 
   }
   const snapshot = snapshotFromWindows("codex", observedAt, windows);
   const tickets = TICKETS.exec(raw);
-  return tickets ? { ...snapshot, resetCredits: Number(tickets[1]) } : snapshot;
+  const resetCredits = tickets ? Number(tickets[1]) : undefined;
+  return isResetCreditCount(resetCredits) ? { ...snapshot, resetCredits } : snapshot;
 }
 
 type RateLimitWindow = {
@@ -105,7 +107,7 @@ function parseStructuredRateLimits(raw: string, observedAt: string): UsageSnapsh
 
   const snapshot = snapshotFromWindows("codex", observedAt, windows);
   const resetCredits = response.rateLimitResetCredits?.availableCount;
-  return typeof resetCredits === "number" ? { ...snapshot, resetCredits } : snapshot;
+  return isResetCreditCount(resetCredits) ? { ...snapshot, resetCredits } : snapshot;
 }
 
 function windowLabel(minutes: number): string {
