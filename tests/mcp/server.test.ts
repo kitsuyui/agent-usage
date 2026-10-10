@@ -31,9 +31,12 @@ beforeAll(async () => {
   const observedAt = "2026-07-18T09:00:00Z";
   await recordSnapshot(
     db,
-    snapshotFromWindows("codex", observedAt, [
-      remainingWindow({ window: "5h", remainingPercent: 70, resetsRaw: "2h 0m", observedAt }),
-    ]),
+    {
+      ...snapshotFromWindows("codex", observedAt, [
+        remainingWindow({ window: "5h", remainingPercent: 70, resetsRaw: "2h 0m", observedAt }),
+      ]),
+      resetCredits: 0,
+    },
   );
   await recordSnapshot(db, {
     ...emptySnapshot(
@@ -78,8 +81,10 @@ describe("MCP server", () => {
       status: string;
       errorCode: string | null;
       cliVersion: string | null;
+      resetCredits: number | null;
     }[];
     expect(payload.find((entry) => entry.id === "codex")?.hasData).toBe(true);
+    expect(payload.find((entry) => entry.id === "codex")?.resetCredits).toBe(0);
     expect(payload.find((entry) => entry.id === "claude")?.hasData).toBe(false);
     expect(payload.find((entry) => entry.id === "antigravity")).toMatchObject({
       status: "failing",

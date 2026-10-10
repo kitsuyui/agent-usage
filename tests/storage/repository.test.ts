@@ -292,6 +292,45 @@ describe("repository", () => {
     expect(point?.cliVersion).toBe("tool 1.2.3");
   });
 
+  test("reports reset credits only from the latest successful sample", async () => {
+    const provider = "reset-credit-health";
+    const firstAt = "2026-07-25T09:00:00Z";
+    const first = snapshotFromWindows(provider, firstAt, [
+      usedWindow({ window: "session", usedPercent: 10, observedAt: firstAt }),
+    ]);
+    await recordSnapshot(db, { ...first, resetCredits: 0 });
+    expect(await providerHealth(db, provider, 60 * 60 * 24 * 365)).toMatchObject({
+      latestOk: true,
+      resetCredits: 0,
+    });
+
+    const omittedAt = "2026-07-25T09:15:00Z";
+    await recordSnapshot(db, snapshotFromWindows(provider, omittedAt, [
+      usedWindow({ window: "session", usedPercent: 20, observedAt: omittedAt }),
+    ]));
+    expect(await providerHealth(db, provider, 60 * 60 * 24 * 365)).toMatchObject({
+      latestOk: true,
+      resetCredits: null,
+    });
+
+    const reportedAt = "2026-07-25T09:30:00Z";
+    const reported = snapshotFromWindows(provider, reportedAt, [
+      usedWindow({ window: "session", usedPercent: 30, observedAt: reportedAt }),
+    ]);
+    await recordSnapshot(db, { ...reported, resetCredits: 4 });
+    expect(await providerHealth(db, provider, 1)).toMatchObject({
+      latestOk: true,
+      stale: true,
+      resetCredits: 4,
+    });
+
+    await recordSnapshot(db, emptySnapshot(provider, "2026-07-25T09:45:00Z", "unavailable", "unavailable"));
+    expect(await providerHealth(db, provider, 60 * 60 * 24 * 365)).toMatchObject({
+      latestOk: false,
+      resetCredits: null,
+    });
+  });
+
   test("marks an old successful collector as stale", async () => {
     expect(await providerHealth(db, "claude", 1)).toMatchObject({
       status: "stale",
