@@ -75,7 +75,7 @@ describe("repository", () => {
     expect(codexReset?.resetsAt).toBe("2026-07-18T14:00:00Z");
   });
 
-  test("reports the observed reset boundary before the current cycle", async () => {
+  test("starts pace at the first observation after an observed scheduled reset", async () => {
     await recordSnapshot(
       db,
       snapshotFromWindows("cycle-boundary", "2026-07-22T09:50:00Z", [
@@ -113,7 +113,7 @@ describe("repository", () => {
     const reset = (await nextResets(db)).find((entry) => entry.provider === "cycle-boundary");
     expect(reset).toMatchObject({
       resetsAt: "2026-07-22T15:00:00Z",
-      previousResetAt: "2026-07-22T10:00:00Z",
+      previousResetAt: "2026-07-22T10:10:00Z",
       cyclePace: {
         firstObservedAt: "2026-07-22T10:10:00Z",
         firstRemainingPercent: 95,
@@ -121,6 +121,122 @@ describe("repository", () => {
         latestRemainingPercent: 85,
       },
     });
+  });
+
+  test("uses the latest observed recovery instead of an obsolete scheduled reset", async () => {
+    const provider = "recovery-boundary";
+    const entries = [
+      ["2026-07-23T08:00:00Z", 45, "2026-07-23T09:00:00Z"],
+      ["2026-07-23T08:30:00Z", 42, "2026-07-23T09:00:00Z"],
+      ["2026-07-23T09:20:00Z", 100, "2026-07-23T14:20:00Z"],
+      ["2026-07-23T10:20:00Z", 80, "2026-07-23T14:20:05Z"],
+    ] as const;
+    for (const [observedAt, remainingPercent, resetsAt] of entries) {
+      await recordSnapshot(db, snapshotFromWindows(provider, observedAt, [
+        remainingWindow({ window: "session", remainingPercent, resetsAt, observedAt }),
+      ]));
+    }
+
+    const reset = (await nextResets(db)).find((entry) => entry.provider === provider);
+    expect(reset).toMatchObject({
+      previousResetAt: "2026-07-23T09:20:00Z",
+      cyclePace: {
+        firstObservedAt: "2026-07-23T09:20:00Z",
+        firstRemainingPercent: 100,
+        latestObservedAt: "2026-07-23T10:20:00Z",
+        latestRemainingPercent: 80,
+      },
+    });
+  });
+
+  test("starts a new epoch when capacity recovers without a deadline change", async () => {
+    const provider = "recovery-without-deadline-change";
+    const entries = [
+      ["2026-07-23T17:00:00Z", 50],
+      ["2026-07-23T17:30:00Z", 45],
+      ["2026-07-23T18:00:00Z", 80],
+      ["2026-07-23T18:30:00Z", 70],
+    ] as const;
+    for (const [observedAt, remainingPercent] of entries) {
+      await recordSnapshot(db, snapshotFromWindows(provider, observedAt, [
+        remainingWindow({ window: "session", remainingPercent, resetsAt: "2026-07-23T23:00:00Z", observedAt }),
+      ]));
+    }
+
+    const reset = (await nextResets(db)).find((entry) => entry.provider === provider);
+    expect(reset?.cyclePace).toMatchObject({
+      firstObservedAt: "2026-07-23T18:00:00Z",
+      firstRemainingPercent: 80,
+      latestRemainingPercent: 70,
+    });
+  });
+
+  test("starts a new epoch when the provider meaningfully changes the future deadline", async () => {
+    const provider = "deadline-change";
+    const entries = [
+      ["2026-07-25T08:00:00Z", 80, "2026-07-25T12:00:00Z"],
+      ["2026-07-25T08:30:00Z", 70, "2026-07-25T12:00:05Z"],
+      ["2026-07-25T09:00:00Z", 60, "2026-07-25T14:00:00Z"],
+      ["2026-07-25T09:30:00Z", 50, "2026-07-25T14:00:05Z"],
+    ] as const;
+    for (const [observedAt, remainingPercent, resetsAt] of entries) {
+      await recordSnapshot(db, snapshotFromWindows(provider, observedAt, [
+        remainingWindow({ window: "session", remainingPercent, resetsAt, observedAt }),
+      ]));
+    }
+
+    const reset = (await nextResets(db)).find((entry) => entry.provider === provider);
+    expect(reset?.cyclePace).toMatchObject({
+      firstObservedAt: "2026-07-25T09:00:00Z",
+      firstRemainingPercent: 60,
+      latestRemainingPercent: 50,
+    });
+  });
+
+  test("keeps a weekly boundary when it is older than 512 frequent observations", async () => {
+    const provider = "weekly-long-history";
+    const cycleStart = Date.parse("2026-08-01T00:00:00Z");
+    const resetsAt = "2026-08-08T00:00:00Z";
+    await recordSnapshot(db, snapshotFromWindows(provider, new Date(cycleStart - 5 * 60_000).toISOString(), [
+      remainingWindow({
+        window: "weekly",
+        remainingPercent: 40,
+        resetsAt: "2026-08-01T00:00:00Z",
+        observedAt: new Date(cycleStart - 5 * 60_000).toISOString(),
+      }),
+    ]));
+    for (let index = 0; index <= 600; index += 1) {
+      const observedAt = new Date(cycleStart + index * 5 * 60_000).toISOString();
+      await recordSnapshot(db, snapshotFromWindows(provider, observedAt, [
+        remainingWindow({
+          window: "weekly",
+          remainingPercent: 100 - index * 0.05,
+          resetsAt,
+          observedAt,
+        }),
+      ]));
+    }
+
+    const reset = (await nextResets(db)).find((entry) => entry.provider === provider);
+    expect(reset?.cyclePace).toMatchObject({
+      firstObservedAt: "2026-08-01T00:00:00Z",
+      firstRemainingPercent: 100,
+      latestObservedAt: "2026-08-03T02:00:00Z",
+      latestRemainingPercent: 70,
+    });
+  });
+
+  test("does not publish a pace until a recovered epoch has two observations", async () => {
+    const provider = "insufficient-recovery";
+    await recordSnapshot(db, snapshotFromWindows(provider, "2026-07-24T08:00:00Z", [
+      remainingWindow({ window: "session", remainingPercent: 30, resetsAt: "2026-07-24T09:00:00Z", observedAt: "2026-07-24T08:00:00Z" }),
+    ]));
+    await recordSnapshot(db, snapshotFromWindows(provider, "2026-07-24T08:30:00Z", [
+      remainingWindow({ window: "session", remainingPercent: 100, resetsAt: "2026-07-24T13:30:00Z", observedAt: "2026-07-24T08:30:00Z" }),
+    ]));
+
+    const reset = (await nextResets(db)).find((entry) => entry.provider === provider);
+    expect(reset).toMatchObject({ previousResetAt: "2026-07-24T08:30:00Z", cyclePace: null });
   });
 
   test("queries history filtered by provider and window", async () => {

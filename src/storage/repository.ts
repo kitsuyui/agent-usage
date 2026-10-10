@@ -207,6 +207,10 @@ export interface NextReset {
   attributes: Record<string, string>;
   cliVersion: string | null;
   resetsAt: string | null;
+  /**
+   * Compatibility field naming the first observation in the segment used for
+   * `cyclePace`. It is an observed estimate boundary, not an exact reset event.
+   */
   previousResetAt: string | null;
   cyclePace: CyclePace | null;
   remainingPercent: number | null;
@@ -220,14 +224,25 @@ export interface CyclePace {
   latestRemainingPercent: number;
 }
 
-/** The latest reset time and, when observed, its preceding reset boundary. */
+const RESET_TIME_JITTER_MS = 60_000;
+const MINIMUM_RECOVERY_PERCENT = 1;
+const CYCLE_BOUNDARY_MARGIN_MS = 5 * 60_000;
+const UNKNOWN_WINDOW_LOOKBACK_MS = 31 * 24 * 60 * 60_000;
+
+/** The latest reset time and a pace from the most recently observed quota epoch. */
 export async function nextResets(db: PrismaClient): Promise<NextReset[]> {
   const snapshots = await latestSnapshots(db);
   return Promise.all(
     snapshots.flatMap((snapshot) =>
       snapshot.windows.map(async (window) => {
         const identity = resetIdentity(snapshot, window);
-        const previous = await previousResetAt(db, identity, window.resetsAt, snapshot.observedAt);
+        const cycle = await observedCycle(
+          db,
+          identity,
+          window.resetsAt,
+          snapshot.observedAt,
+          remainingPercentOf(window),
+        );
         return {
           ...identity,
           seriesId: seriesId(identity),
@@ -237,15 +252,8 @@ export async function nextResets(db: PrismaClient): Promise<NextReset[]> {
           usedValue: window.usedValue ?? null,
           cliVersion: snapshot.cliVersion ?? null,
           resetsAt: window.resetsAt ?? null,
-          previousResetAt: previous,
-          cyclePace: await currentCyclePace(
-            db,
-            identity,
-            previous,
-            window.resetsAt,
-            snapshot.observedAt,
-            remainingPercentOf(window),
-          ),
+          previousResetAt: cycle?.startedAt ?? null,
+          cyclePace: cycle?.pace ?? null,
           remainingPercent: window.remainingPercent ?? null,
           usedPercent: window.usedPercent ?? null,
         };
@@ -292,75 +300,89 @@ function resetIdentityWhere(identity: ReturnType<typeof resetIdentity>) {
   };
 }
 
-async function previousResetAt(
-  db: PrismaClient,
-  identity: ReturnType<typeof resetIdentity>,
-  currentResetAt: string | undefined,
-  latestObservedAt: string,
-): Promise<string | null> {
-  if (!currentResetAt) return null;
-  const currentTime = Date.parse(currentResetAt);
-  const observedTime = Date.parse(latestObservedAt);
-  if (!Number.isFinite(currentTime) || !Number.isFinite(observedTime) || currentTime <= observedTime) return null;
-
-  const row = await db.window.findFirst({
-    where: {
-      ...resetIdentityWhere(identity),
-      resetsAt: { lte: new Date(observedTime) },
-    },
-    orderBy: { resetsAt: "desc" },
-    select: { resetsAt: true },
-  });
-  return row?.resetsAt ? toIsoSeconds(row.resetsAt) : null;
+interface CycleObservation {
+  startedAt: string;
+  pace: CyclePace | null;
 }
 
-async function currentCyclePace(
+/**
+ * Finds the latest observed epoch boundary. A provider's reset timestamp is a
+ * schedule, not proof that capacity changed: stale schedules can remain in
+ * history after a campaign credit or an out-of-band reset. We therefore only
+ * start a pace after an observed recovery or a meaningful deadline transition.
+ */
+async function observedCycle(
   db: PrismaClient,
   identity: ReturnType<typeof resetIdentity>,
-  previousResetAt: string | null,
   currentResetAt: string | undefined,
   latestObservedAt: string,
   latestRemainingPercent: number | null,
-): Promise<CyclePace | null> {
-  if (!previousResetAt || !currentResetAt || latestRemainingPercent === null) return null;
-  const cycleStart = Date.parse(previousResetAt);
-  const currentReset = Date.parse(currentResetAt);
-  const latest = Date.parse(latestObservedAt);
-  if (
-    !Number.isFinite(cycleStart) ||
-    !Number.isFinite(currentReset) ||
-    !Number.isFinite(latest) ||
-    cycleStart >= latest ||
-    currentReset <= latest
-  ) {
-    return null;
-  }
+): Promise<CycleObservation | null> {
+  if (!currentResetAt || latestRemainingPercent === null) return null;
+  const currentTime = Date.parse(currentResetAt);
+  const latestTime = Date.parse(latestObservedAt);
+  if (!Number.isFinite(currentTime) || !Number.isFinite(latestTime) || currentTime <= latestTime) return null;
 
-  const first = await db.window.findFirst({
-    where: {
-      ...resetIdentityWhere(identity),
-      observedAt: { gte: new Date(cycleStart), lte: new Date(latest) },
-      resetsAt: { gt: new Date(cycleStart) },
-    },
-    orderBy: { observedAt: "asc" },
-    select: { observedAt: true, remainingPercent: true, usedPercent: true },
-  });
-  const firstRemainingPercent = first ? remainingPercentOf(first) : null;
-  if (
-    !first ||
-    firstRemainingPercent === null ||
-    first.observedAt.getTime() >= latest ||
-    !Number.isFinite(firstRemainingPercent) ||
-    !Number.isFinite(latestRemainingPercent)
-  ) {
-    return null;
-  }
-  return {
-    firstObservedAt: toIsoSeconds(first.observedAt),
-    firstRemainingPercent,
-    latestObservedAt,
-    latestRemainingPercent,
+  const lookbackMs = identity.windowSeconds === null
+    ? UNKNOWN_WINDOW_LOOKBACK_MS
+    : identity.windowSeconds * 1_000;
+  const since = new Date(currentTime - lookbackMs - CYCLE_BOUNDARY_MARGIN_MS);
+  const where = {
+    ...resetIdentityWhere(identity),
+    observedAt: { gte: since, lte: new Date(latestTime) },
   };
+  const select = { observedAt: true, resetsAt: true, remainingPercent: true, usedPercent: true };
+  const [beforeRange, rows] = await Promise.all([
+    db.window.findFirst({
+      where: { ...resetIdentityWhere(identity), observedAt: { lt: since } },
+      orderBy: { observedAt: "desc" },
+      select,
+    }),
+    db.window.findMany({
+      where,
+      orderBy: { observedAt: "asc" },
+      select,
+    }),
+  ]);
+  const observations = (beforeRange ? [beforeRange, ...rows] : rows).flatMap((row) => {
+    const remainingPercent = remainingPercentOf(row);
+    const observedAt = row.observedAt.getTime();
+    if (remainingPercent === null || !Number.isFinite(remainingPercent) || !Number.isFinite(observedAt)) return [];
+    return [{ observedAt, remainingPercent, resetsAt: row.resetsAt?.getTime() ?? null }];
+  });
+  if (observations.length < 2) return null;
+
+  let boundary = -1;
+  for (let index = 1; index < observations.length; index += 1) {
+    if (isCycleBoundary(observations[index - 1]!, observations[index]!)) boundary = index;
+  }
+  if (boundary < 0) return null;
+
+  const first = observations[boundary]!;
+  const latest = observations.at(-1)!;
+  const startedAt = toIsoSeconds(new Date(first.observedAt));
+  if (first.observedAt >= latest.observedAt) return { startedAt, pace: null };
+  return {
+    startedAt,
+    pace: {
+      firstObservedAt: startedAt,
+      firstRemainingPercent: first.remainingPercent,
+      latestObservedAt,
+      latestRemainingPercent,
+    },
+  };
+}
+
+function isCycleBoundary(
+  previous: { observedAt: number; remainingPercent: number; resetsAt: number | null },
+  current: { observedAt: number; remainingPercent: number; resetsAt: number | null },
+): boolean {
+  if (current.remainingPercent - previous.remainingPercent >= MINIMUM_RECOVERY_PERCENT) return true;
+  if (previous.resetsAt === null || current.resetsAt === null) return false;
+
+  const deadlineChanged = Math.abs(current.resetsAt - previous.resetsAt) > RESET_TIME_JITTER_MS;
+  if (!deadlineChanged) return false;
+  return current.resetsAt > current.observedAt + RESET_TIME_JITTER_MS;
 }
 
 function remainingPercentOf(window: {

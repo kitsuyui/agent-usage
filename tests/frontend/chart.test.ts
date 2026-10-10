@@ -100,12 +100,39 @@ describe("chart reset annotations", () => {
     expect(svg).toContain(`data-previous-reset-at="${NOW - 6 * HOUR}"`);
     expect(svg).toContain(`data-average-pace-to="${NOW + 2 * HOUR}"`);
     expect(svg).toContain('class="average-pace"');
-    expect(buildLegend([item], [cycle], NOW)).toContain("Cycle began");
+    expect(buildLegend([item], [cycle], NOW)).toContain("Pace since");
   });
 
   test("does not estimate a pace until a prior reset boundary is observed", () => {
     expect(cycleAverageTrend(series(), reset("session", NOW + HOUR), NOW)).toBeNull();
     expect(buildLegend([series()], [reset("session", NOW + HOUR)], NOW)).not.toContain("Est. 0%");
+  });
+
+  test("does not fall back to selected history or project a recovered quota upward", () => {
+    const item = series({ points: [[NOW - 6 * HOUR, 20], [NOW - HOUR, 80]] });
+    const cycle = {
+      seriesId: "session",
+      previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
+      resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
+      cyclePace: {
+        firstObservedAt: new Date(NOW - 6 * HOUR).toISOString(),
+        firstRemainingPercent: 20,
+        latestObservedAt: new Date(NOW - HOUR).toISOString(),
+        latestRemainingPercent: 80,
+      },
+    };
+    expect(cycleAverageTrend(item, cycle, NOW)).toBeNull();
+    expect(buildChartSvg([item], "remaining-percent", [cycle], NOW, item.windowSeconds)).not.toContain("average-pace");
+  });
+
+  test("requires a storage-reported pace instead of deriving one from chart history", () => {
+    const item = series({ points: [[NOW - 6 * HOUR, 100], [NOW - HOUR, 20]] });
+    const cycle = {
+      seriesId: "session",
+      previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
+      resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
+    };
+    expect(cycleAverageTrend(item, cycle, NOW)).toBeNull();
   });
 
   test("marks a pace that reaches zero before the next reset", () => {
@@ -114,6 +141,12 @@ describe("chart reset annotations", () => {
       seriesId: "session",
       previousResetAt: new Date(NOW - 6 * HOUR).toISOString(),
       resetsAt: new Date(NOW + 2 * HOUR).toISOString(),
+      cyclePace: {
+        firstObservedAt: new Date(NOW - 6 * HOUR).toISOString(),
+        firstRemainingPercent: 100,
+        latestObservedAt: new Date(NOW - HOUR).toISOString(),
+        latestRemainingPercent: 20,
+      },
     };
     const svg = buildChartSvg([item], "remaining-percent", [cycle], NOW, item.windowSeconds);
     expect(svg).toContain('class="average-pace average-pace-depleting"');

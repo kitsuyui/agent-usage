@@ -43,11 +43,12 @@ provider computes `resetsAt` directly instead of parsing it — see
   number, its local date/time, and a countdown. Dashed markers place nearby
   resets on the time axis; an arrow identifies later resets without squeezing
   the usage history. Unknown or expired reset times remain explicit.
-- For percentage quotas with an observed prior reset boundary, charts also
-  extend one dotted, current-cycle average pace line toward the next reset.
-  The legend shows a future estimated local 0% date and time when that pace would
-  exhaust the quota before reset. No pace line is invented until the cycle
-  boundary is known.
+- For percentage quotas with an observed capacity recovery or a meaningful
+  reset-deadline transition, charts extend one dotted pace line from that
+  observed epoch toward the next reset. The estimate uses only later,
+  continuously decreasing observations; it is withheld when the boundary or
+  pace is insufficient. The legend shows a future estimated local 0% date and
+  time when that pace would exhaust the quota before reset.
 - New providers are a config object + a parser function away — see
   [`docs/providers.md`](docs/providers.md).
 
