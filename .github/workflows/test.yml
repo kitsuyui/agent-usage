@@ -47,3 +47,6 @@ jobs:
 
       - name: Build frontend
         run: bun run build:frontend
+
+      - name: Test source release checks
+        run: bash scripts/release/test-source-release.sh
