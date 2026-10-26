@@ -1,0 +1,25 @@
+name: Source release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable version tag (for example v0.1.0)
+        required: true
+        type: string
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: source-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Verify CI and create source release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CI_WORKFLOW: test.yml
+        run: bash scripts/release/source-release.sh

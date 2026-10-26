@@ -250,3 +250,12 @@ Tests that touch storage/HTTP/MCP spin up their own throwaway SQLite file via
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+## Source releases
+
+A maintainer can run the **Source release** GitHub Actions workflow on `main`
+with a new stable tag such as `v0.1.0`. The workflow requires the existing
+`test` workflow to have succeeded on that exact commit and creates a GitHub
+source release. If release creation fails after the tag is created, inspect
+the existing tag target SHA in the GitHub UI or API, then create the release
+for that tag without moving it. Do not upload locally built artifacts.
